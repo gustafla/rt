@@ -97,9 +97,9 @@ fn main() -> Result<(), image::error::ImageError> {
 
     // Render
     let mut buf = image::RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
-    for j in 0..IMAGE_HEIGHT {
+    for (j, line) in buf.enumerate_rows_mut() {
         eprint!("Scanlines remaining: {:>5}\r", IMAGE_HEIGHT - j - 1);
-        for i in 0..IMAGE_WIDTH {
+        for (i, _, pixel) in line {
             // Ray through viewport in right handed space
             let u = i as f32 / (IMAGE_WIDTH - 1) as f32; // i to u
             let v = 1. - (j as f32 / (IMAGE_HEIGHT - 1) as f32); // j (y down) to v (y up)
@@ -107,7 +107,7 @@ fn main() -> Result<(), image::error::ImageError> {
             let r = Ray::new(origin, uv_on_plane - origin);
 
             // Store color seen in this pixel
-            buf.put_pixel(i, j, ray_color(&r).into());
+            *pixel = ray_color(&r).into();
         }
     }
 
