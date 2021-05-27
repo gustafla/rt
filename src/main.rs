@@ -1,4 +1,5 @@
 use glam::Vec3;
+use std::convert::TryFrom;
 
 struct Color(Vec3);
 
@@ -74,7 +75,7 @@ fn ray_color(r: &Ray) -> Color {
 fn main() -> Result<(), image::error::ImageError> {
     // Image
     const ASPECT_RATIO: f32 = 16. / 9.;
-    const IMAGE_WIDTH: u32 = 3840;
+    const IMAGE_WIDTH: u32 = 7680;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
 
     // Camera
@@ -95,21 +96,58 @@ fn main() -> Result<(), image::error::ImageError> {
                           /* this actually makes the vector point forward (towards negative z) */
         );
 
-    // Render
-    let mut buf = image::RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
-    for (j, line) in buf.enumerate_rows_mut() {
-        eprint!("Scanlines remaining: {:>5}\r", IMAGE_HEIGHT - j - 1);
-        for (i, _, pixel) in line {
-            // Ray through viewport in right handed space
-            let u = i as f32 / (IMAGE_WIDTH - 1) as f32; // i to u
-            let v = 1. - (j as f32 / (IMAGE_HEIGHT - 1) as f32); // j (y down) to v (y up)
-            let uv_on_plane = lower_left_corner + u * horizontal + v * vertical;
-            let r = Ray::new(origin, uv_on_plane - origin);
+    // Render using all cpu cores
+    let cpus = num_cpus::get();
+    let mut threads = Vec::with_capacity(cpus + 1);
+    let cpus = u32::try_from(cpus).unwrap().min(IMAGE_HEIGHT);
+    let lines_per_thread = IMAGE_HEIGHT / cpus;
+    let rounding_error_lines = IMAGE_HEIGHT - lines_per_thread * cpus;
+    for thread in 0..cpus + if rounding_error_lines > 0 { 1 } else { 0 } {
+        threads.push(std::thread::spawn(move || {
+            // Account for rounding error with extra n+1:th thread
+            let lines = if thread == cpus {
+                rounding_error_lines
+            } else {
+                lines_per_thread
+            };
 
-            // Store color seen in this pixel
-            *pixel = ray_color(&r).into();
-        }
+            // Construct a buffer
+            let mut buf = image::RgbImage::new(IMAGE_WIDTH, lines);
+
+            // Fill the buffer
+            for (j, line) in buf.enumerate_rows_mut() {
+                if thread == 0 {
+                    eprint!("Scanlines remaining: {:>5}\r", (lines - j - 1) * cpus);
+                }
+                let j = thread * lines_per_thread + j;
+
+                for (i, _, pixel) in line {
+                    // Ray through viewport in right handed space
+                    let u = i as f32 / (IMAGE_WIDTH - 1) as f32; // i to u
+                    let v = 1. - (j as f32 / (IMAGE_HEIGHT - 1) as f32); // j (y down) to v (y up)
+                    let uv_on_plane = lower_left_corner + u * horizontal + v * vertical;
+                    let r = Ray::new(origin, uv_on_plane - origin);
+
+                    // Store color seen in this pixel
+                    *pixel = ray_color(&r).into();
+                }
+            }
+
+            // Return the buffer to be concatenated
+            buf
+        }));
     }
+
+    // Construct single image by concatenating thread results
+    let buf = image::RgbImage::from_vec(
+        IMAGE_WIDTH,
+        IMAGE_HEIGHT,
+        threads
+            .into_iter()
+            .flat_map(|t| t.join().unwrap().into_vec())
+            .collect(),
+    )
+    .unwrap();
 
     // Output file
     let output_file_path = std::env::args_os()
