@@ -38,7 +38,20 @@ impl Ray {
     }
 }
 
+fn hit_sphere(center: Vec3, radius: f32, r: &Ray) -> bool {
+    let oc = r.origin() - center;
+    let a = r.direction().dot(r.direction());
+    let b = 2.0 * oc.dot(r.direction());
+    let c = oc.dot(oc) - radius * radius;
+    let discriminant = b * b - 4. * a * c;
+    discriminant > 0.
+}
+
 fn ray_color(r: &Ray) -> impl Color {
+    if hit_sphere(Vec3::new(0., 0., -1.), 0.5, r) {
+        return Vec3::X;
+    }
+
     let unit_direction = r.direction().normalize();
     // From 0 to 1 when down to up
     let t = 0.5 * (unit_direction.y + 1.);
