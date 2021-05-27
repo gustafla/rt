@@ -47,6 +47,23 @@ struct HitRecord {
     pub position: Vec3,
     pub normal: Vec3,
     pub t: f32,
+    pub front_facing: bool,
+}
+
+impl HitRecord {
+    pub fn new(position: Vec3, outward_normal: Vec3, t: f32, r: &Ray) -> Self {
+        let front_facing = r.direction().dot(outward_normal) < 0.;
+        Self {
+            position,
+            normal: if front_facing {
+                outward_normal
+            } else {
+                -outward_normal
+            },
+            t,
+            front_facing,
+        }
+    }
 }
 
 trait Hit {
@@ -87,11 +104,8 @@ impl Hit for Sphere {
         }
 
         let position = r.at(root);
-        Some(HitRecord {
-            position,
-            normal: (position - self.center) / self.radius,
-            t: root,
-        })
+        let outward_normal = (position - self.center) / self.radius;
+        Some(HitRecord::new(position, outward_normal, root, r))
     }
 }
 
