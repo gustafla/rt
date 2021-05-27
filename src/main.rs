@@ -1,5 +1,6 @@
 use glam::Vec3;
 use std::convert::TryFrom;
+use std::ops::Range;
 
 struct Color(Vec3);
 
@@ -42,27 +43,62 @@ impl Ray {
     }
 }
 
-fn hit_sphere(center: Vec3, radius: f32, r: &Ray) -> f32 {
-    let oc = r.origin() - center;
-    let a = r.direction().dot(r.direction());
-    let b = 2.0 * oc.dot(r.direction());
-    let c = oc.dot(oc) - radius * radius;
-    let discriminant = b * b - 4. * a * c;
+struct HitRecord {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub t: f32,
+}
 
-    if discriminant < 0. {
-        -1.
-    } else {
-        (-b - discriminant.sqrt()) / (2. * a)
+trait Hit {
+    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord>;
+}
+
+struct Sphere {
+    center: Vec3,
+    radius: f32,
+}
+
+impl Sphere {
+    fn new(center: Vec3, radius: f32) -> Self {
+        Self { center, radius }
+    }
+}
+
+impl Hit for Sphere {
+    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
+        let oc = r.origin() - self.center;
+        let a = r.direction().length().powi(2);
+        let half_b = oc.dot(r.direction());
+        let c = oc.length().powi(2) - self.radius.powi(2);
+
+        let discriminant = half_b * half_b - a * c;
+        if discriminant < 0. {
+            return None;
+        }
+
+        // Find the nearest root that lies in the acceptable range
+        let sqrtd = discriminant.sqrt();
+        let mut root = (-half_b - sqrtd) / a;
+        if root < t_range.start || t_range.end < root {
+            root = (-half_b + sqrtd) / a;
+            if root < t_range.start || t_range.end < root {
+                return None;
+            }
+        }
+
+        let position = r.at(root);
+        Some(HitRecord {
+            position,
+            normal: (position - self.center) / self.radius,
+            t: root,
+        })
     }
 }
 
 fn ray_color(r: &Ray) -> Color {
-    let sphere = Vec3::new(0., 0., -1.);
-    let t = hit_sphere(sphere, 0.5, r);
-    if t > 0. {
-        // Normal for the ray intersection point on the sphere surface
-        let n = (r.at(t) - sphere).normalize();
-        return (0.5 * Vec3::new(n.x + 1., n.y + 1., n.z + 1.)).into();
+    let sphere = Sphere::new(Vec3::new(0., 0., -1.), 0.5);
+    if let Some(hit) = sphere.hit(r, 0.0..10.) {
+        return (0.5 * Vec3::new(hit.normal.x + 1., hit.normal.y + 1., hit.normal.z + 1.)).into();
     }
 
     let unit_direction = r.direction().normalize();
