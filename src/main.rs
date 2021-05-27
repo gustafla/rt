@@ -1,6 +1,7 @@
 use glam::Vec3;
 use std::convert::TryFrom;
 use std::ops::Range;
+use std::sync::Arc;
 
 struct Color(Vec3);
 
@@ -70,6 +71,27 @@ trait Hit {
     fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord>;
 }
 
+type WorldItem = Box<dyn Hit + Send + Sync>;
+// TODO remove this Arc by somehow allowing all threads to borrow a World. Perhaps with crossbeam?
+// Cannot make World itself clonable as it would violate object safety.
+type World = Arc<Vec<WorldItem>>;
+
+impl Hit for World {
+    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
+        let mut nearest_hit = None;
+        let mut nearest_t = t_range.end;
+
+        for surface in self.iter() {
+            if let Some(hit) = surface.hit(r, t_range.start..nearest_t) {
+                nearest_t = hit.t;
+                nearest_hit = Some(hit);
+            }
+        }
+
+        nearest_hit
+    }
+}
+
 struct Sphere {
     center: Vec3,
     radius: f32,
@@ -88,7 +110,7 @@ impl Hit for Sphere {
         let half_b = oc.dot(r.direction());
         let c = oc.length().powi(2) - self.radius.powi(2);
 
-        let discriminant = half_b * half_b - a * c;
+        let discriminant = half_b.powi(2) - a * c;
         if discriminant < 0. {
             return None;
         }
@@ -109,17 +131,16 @@ impl Hit for Sphere {
     }
 }
 
-fn ray_color(r: &Ray) -> Color {
-    let sphere = Sphere::new(Vec3::new(0., 0., -1.), 0.5);
-    if let Some(hit) = sphere.hit(r, 0.0..10.) {
-        return (0.5 * Vec3::new(hit.normal.x + 1., hit.normal.y + 1., hit.normal.z + 1.)).into();
+fn ray_color(r: Ray, world: World) -> Color {
+    if let Some(hit) = world.hit(&r, 0.0..f32::INFINITY) {
+        (0.5 * (hit.normal + Vec3::ONE)).into()
+    } else {
+        let unit_direction = r.direction().normalize();
+        // From 0 to 1 when down to up
+        let t = 0.5 * (unit_direction.y + 1.);
+        // Blue to white gradient
+        Vec3::ONE.lerp(Vec3::new(0.5, 0.7, 1.), t).into()
     }
-
-    let unit_direction = r.direction().normalize();
-    // From 0 to 1 when down to up
-    let t = 0.5 * (unit_direction.y + 1.);
-    // Blue to white gradient
-    Vec3::ONE.lerp(Vec3::new(0.5, 0.7, 1.), t).into()
 }
 
 fn main() -> Result<(), image::error::ImageError> {
@@ -127,6 +148,12 @@ fn main() -> Result<(), image::error::ImageError> {
     const ASPECT_RATIO: f32 = 16. / 9.;
     const IMAGE_WIDTH: u32 = 7680;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
+
+    // World
+    let world = Arc::new(vec![
+        Box::new(Sphere::new(Vec3::new(0., 0., -1.), 0.5)) as WorldItem,
+        Box::new(Sphere::new(Vec3::new(0., -100.5, -1.), 100.)),
+    ]);
 
     // Camera
     let viewport_height = 2.;
@@ -153,6 +180,7 @@ fn main() -> Result<(), image::error::ImageError> {
     let lines_per_thread = IMAGE_HEIGHT / cpus;
     let rounding_error_lines = IMAGE_HEIGHT - lines_per_thread * cpus;
     for thread in 0..cpus + if rounding_error_lines > 0 { 1 } else { 0 } {
+        let world = world.clone();
         threads.push(std::thread::spawn(move || {
             // Account for rounding error with extra n+1:th thread
             let lines = if thread == cpus {
@@ -179,7 +207,7 @@ fn main() -> Result<(), image::error::ImageError> {
                     let r = Ray::new(origin, uv_on_plane - origin);
 
                     // Store color seen in this pixel
-                    *pixel = ray_color(&r).into();
+                    *pixel = ray_color(r, world.clone()).into();
                 }
             }
 
