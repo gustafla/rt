@@ -1,17 +1,20 @@
 use glam::Vec3;
 
-trait Color {
-    fn format_color(self) -> String;
+struct Color(Vec3);
+
+impl From<Color> for image::Rgb<u8> {
+    fn from(color: Color) -> Self {
+        Self([
+            (255.999 * color.0.x) as u8,
+            (255.999 * color.0.y) as u8,
+            (255.999 * color.0.z) as u8,
+        ])
+    }
 }
 
-impl Color for Vec3 {
-    fn format_color(self) -> String {
-        format!(
-            "{} {} {}",
-            (255.999 * self.x) as u8,
-            (255.999 * self.y) as u8,
-            (255.999 * self.z) as u8,
-        )
+impl From<Vec3> for Color {
+    fn from(v: Vec3) -> Self {
+        Self(v)
     }
 }
 
@@ -38,31 +41,40 @@ impl Ray {
     }
 }
 
-fn hit_sphere(center: Vec3, radius: f32, r: &Ray) -> bool {
+fn hit_sphere(center: Vec3, radius: f32, r: &Ray) -> f32 {
     let oc = r.origin() - center;
     let a = r.direction().dot(r.direction());
     let b = 2.0 * oc.dot(r.direction());
     let c = oc.dot(oc) - radius * radius;
     let discriminant = b * b - 4. * a * c;
-    discriminant > 0.
+
+    if discriminant < 0. {
+        -1.
+    } else {
+        (-b - discriminant.sqrt()) / (2. * a)
+    }
 }
 
-fn ray_color(r: &Ray) -> impl Color {
-    if hit_sphere(Vec3::new(0., 0., -1.), 0.5, r) {
-        return Vec3::X;
+fn ray_color(r: &Ray) -> Color {
+    let sphere = Vec3::new(0., 0., -1.);
+    let t = hit_sphere(sphere, 0.5, r);
+    if t > 0. {
+        // Normal for the ray intersection point on the sphere surface
+        let n = (r.at(t) - sphere).normalize();
+        return (0.5 * Vec3::new(n.x + 1., n.y + 1., n.z + 1.)).into();
     }
 
     let unit_direction = r.direction().normalize();
     // From 0 to 1 when down to up
     let t = 0.5 * (unit_direction.y + 1.);
     // Blue to white gradient
-    Vec3::new(0.5, 0.7, 1.).lerp(Vec3::ONE, t)
+    Vec3::ONE.lerp(Vec3::new(0.5, 0.7, 1.), t).into()
 }
 
-fn main() {
+fn main() -> Result<(), image::error::ImageError> {
     // Image
     const ASPECT_RATIO: f32 = 16. / 9.;
-    const IMAGE_WIDTH: u32 = 256;
+    const IMAGE_WIDTH: u32 = 3840;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
 
     // Camera
@@ -84,21 +96,30 @@ fn main() {
         );
 
     // Render
-    println!("P3");
-    println!("{} {}", IMAGE_WIDTH, IMAGE_HEIGHT);
-    println!("255");
+    let mut buf = image::RgbImage::new(IMAGE_WIDTH, IMAGE_HEIGHT);
     for j in 0..IMAGE_HEIGHT {
         eprint!("Scanlines remaining: {:>5}\r", IMAGE_HEIGHT - j - 1);
         for i in 0..IMAGE_WIDTH {
-            let u = i as f32 / (IMAGE_WIDTH - 1) as f32;
-            let v = j as f32 / (IMAGE_HEIGHT - 1) as f32;
+            // Ray through viewport in right handed space
+            let u = i as f32 / (IMAGE_WIDTH - 1) as f32; // i to u
+            let v = 1. - (j as f32 / (IMAGE_HEIGHT - 1) as f32); // j (y down) to v (y up)
             let uv_on_plane = lower_left_corner + u * horizontal + v * vertical;
-
             let r = Ray::new(origin, uv_on_plane - origin);
 
-            let pixel_color = ray_color(&r);
-            println!("{}", pixel_color.format_color());
+            // Store color seen in this pixel
+            buf.put_pixel(i, j, ray_color(&r).into());
         }
     }
+
+    // Output file
+    let output_file_path = std::env::args_os()
+        .nth(1)
+        .unwrap_or_else(|| std::ffi::OsString::from("image.png"));
+    buf.save(&output_file_path)?;
     eprintln!("\nDone.");
+    std::process::Command::new("imv")
+        .args(&[output_file_path])
+        .output()
+        .ok();
+    Ok(())
 }

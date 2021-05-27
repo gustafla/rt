@@ -1,4 +1,4 @@
-*.ppm
+*.png
 Cargo.lock
 target/
 
