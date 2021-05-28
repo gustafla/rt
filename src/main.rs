@@ -1,4 +1,6 @@
-use glam::Vec3;
+use glam::{Vec2, Vec3};
+use rand::prelude::*;
+use rand_xorshift::XorShiftRng;
 use std::convert::TryFrom;
 use std::ops::Range;
 
@@ -6,11 +8,8 @@ struct Color(Vec3);
 
 impl From<Color> for image::Rgb<u8> {
     fn from(color: Color) -> Self {
-        Self([
-            (255.999 * color.0.x) as u8,
-            (255.999 * color.0.y) as u8,
-            (255.999 * color.0.z) as u8,
-        ])
+        let c = color.0 * 256.;
+        Self([c.x as u8, c.y as u8, c.z as u8])
     }
 }
 
@@ -40,6 +39,49 @@ impl Ray {
 
     pub fn at(&self, t: f32) -> Vec3 {
         self.origin + t * self.direction
+    }
+}
+
+struct Camera {
+    origin: Vec3,
+    lower_left_corner: Vec3,
+    horizontal: Vec3,
+    vertical: Vec3,
+}
+
+impl Camera {
+    pub fn new(aspect_ratio: f32) -> Self {
+        let viewport_height = 2.;
+        let viewport_width = aspect_ratio * viewport_height;
+        let focal_length = 1.;
+
+        let origin = Vec3::ZERO;
+        let horizontal = Vec3::new(viewport_width, 0., 0.);
+        let vertical = Vec3::new(0., viewport_height, 0.);
+        // Projection plane's surface's low left corner point
+        let lower_left_corner = origin
+        - horizontal / 2. // Half viewport in x direction
+        - vertical / 2. // Half viewport in y direction
+        - Vec3::new(
+            0.,
+            0.,
+            focal_length, /* To viewport in z direction. Because of the right handed coordinates */
+                          /* this actually makes the vector point forward (towards negative z) */
+        );
+
+        Self {
+            origin,
+            lower_left_corner,
+            horizontal,
+            vertical,
+        }
+    }
+
+    pub fn get_ray(&self, uv: Vec2) -> Ray {
+        Ray::new(
+            self.origin,
+            self.lower_left_corner + uv.x * self.horizontal + uv.y * self.vertical - self.origin,
+        )
     }
 }
 
@@ -128,23 +170,24 @@ impl Hit for Sphere {
     }
 }
 
-fn ray_color(r: &Ray, world: &World) -> Color {
-    if let Some(hit) = world.hit(r, 0.0..f32::INFINITY) {
-        (0.5 * (hit.normal + Vec3::ONE)).into()
+fn ray_color(r: Ray, world: &World) -> Vec3 {
+    if let Some(hit) = world.hit(&r, 0.0..f32::INFINITY) {
+        0.5 * (hit.normal + Vec3::ONE)
     } else {
         let unit_direction = r.direction().normalize();
         // From 0 to 1 when down to up
         let t = 0.5 * (unit_direction.y + 1.);
         // Blue to white gradient
-        Vec3::ONE.lerp(Vec3::new(0.5, 0.7, 1.), t).into()
+        Vec3::ONE.lerp(Vec3::new(0.5, 0.7, 1.), t)
     }
 }
 
 fn main() {
     // Image
     const ASPECT_RATIO: f32 = 16. / 9.;
-    const IMAGE_WIDTH: u32 = 7680;
+    const IMAGE_WIDTH: u32 = 3840;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
+    const SAMPLES_PER_PIXEL: u32 = 128;
 
     // World
     let world = vec![
@@ -153,22 +196,7 @@ fn main() {
     ];
 
     // Camera
-    let viewport_height = 2.;
-    let viewport_width = ASPECT_RATIO * viewport_height;
-    let focal_length = 1.;
-    let origin = Vec3::ZERO;
-    let horizontal = Vec3::new(viewport_width, 0., 0.);
-    let vertical = Vec3::new(0., viewport_height, 0.);
-    // Projection plane's surface's low left corner point
-    let lower_left_corner = origin
-        - horizontal / 2. // Half viewport in x direction
-        - vertical / 2. // Half viewport in y direction
-        - Vec3::new(
-            0.,
-            0.,
-            focal_length, /* To viewport in z direction. Because of the right handed coordinates */
-                          /* this actually makes the vector point forward (towards negative z) */
-        );
+    let camera = Camera::new(ASPECT_RATIO);
 
     // Render using all cpu cores
     let nthreads = u32::try_from(num_cpus::get()).unwrap().min(IMAGE_HEIGHT);
@@ -179,6 +207,7 @@ fn main() {
             .into_iter()
             .map(|thread| {
                 let world = &world;
+                let camera = &camera;
                 s.spawn(move |_| {
                     // Account for rounding error in the first thread
                     let lines = if thread == 0 {
@@ -189,6 +218,7 @@ fn main() {
 
                     // Color the pixels
                     let mut buf = image::RgbImage::new(IMAGE_WIDTH, lines);
+                    let mut rng = XorShiftRng::seed_from_u64(thread.into());
                     for (j, line) in buf.enumerate_rows_mut() {
                         let mut j = thread * lines_per_thread + j;
                         if thread == 0 {
@@ -198,14 +228,24 @@ fn main() {
                         }
 
                         for (i, _, pixel) in line {
-                            // Ray through viewport in right handed space
-                            let u = i as f32 / (IMAGE_WIDTH - 1) as f32;
-                            let v = 1. - (j as f32 / (IMAGE_HEIGHT - 1) as f32);
-                            let uv_on_plane = lower_left_corner + u * horizontal + v * vertical;
-                            let r = Ray::new(origin, uv_on_plane - origin);
+                            let mut color = Vec3::ZERO;
+                            for _ in 0..SAMPLES_PER_PIXEL {
+                                // Ray through viewport in right handed space
+                                let random = Vec2::new(rng.gen(), rng.gen());
+                                let ij = Vec2::new(i as f32, (IMAGE_HEIGHT - 1 - j) as f32);
+                                let wh = Vec2::new(IMAGE_WIDTH as f32, IMAGE_HEIGHT as f32);
+                                let uv = (ij + random) / (wh - Vec2::ONE);
 
-                            // Store color seen in this pixel
-                            *pixel = ray_color(&r, world).into();
+                                // Accumulate color seen in this sample
+                                color += ray_color(camera.get_ray(uv), world);
+                            }
+
+                            // Average samples, clamp and output to 8bpp RGB buffer
+                            *pixel = Color(
+                                (color / SAMPLES_PER_PIXEL as f32)
+                                    .clamp(Vec3::ZERO, Vec3::splat(0.9999)),
+                            )
+                            .into();
                         }
                     }
 
