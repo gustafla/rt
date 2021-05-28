@@ -19,6 +19,33 @@ impl From<Vec3> for Color {
     }
 }
 
+impl Color {
+    fn sqrt(self) -> Self {
+        Self(Vec3::new(self.0.x.sqrt(), self.0.y.sqrt(), self.0.z.sqrt()))
+    }
+
+    fn clamp(self, min: f32, max: f32) -> Color {
+        Self(self.0.clamp(Vec3::splat(min), Vec3::splat(max)))
+    }
+}
+
+fn random_vec3(rng: &mut impl Rng, r: Range<f32>) -> Vec3 {
+    Vec3::new(
+        rng.gen_range(r.clone()),
+        rng.gen_range(r.clone()),
+        rng.gen_range(r.clone()),
+    )
+}
+
+fn random_vec3_in_sphere(rng: &mut impl Rng) -> Vec3 {
+    loop {
+        let v = random_vec3(rng, -1.0..1.);
+        if v.length() < 1. {
+            return v;
+        }
+    }
+}
+
 struct Ray {
     origin: Vec3,
     direction: Vec3,
@@ -170,9 +197,16 @@ impl Hit for Sphere {
     }
 }
 
-fn ray_color(r: Ray, world: &World) -> Vec3 {
-    if let Some(hit) = world.hit(&r, 0.0..f32::INFINITY) {
-        0.5 * (hit.normal + Vec3::ONE)
+fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
+    if depth <= 0 {
+        return Vec3::ZERO;
+    }
+
+    if let Some(hit) = world.hit(&r, 0.0001..f32::INFINITY) {
+        // Diffuse ray (lambertian-ish distribution)
+        let target = hit.position + hit.normal + random_vec3_in_sphere(rng).normalize();
+        let r = Ray::new(hit.position, target - hit.position);
+        0.5 * ray_color(r, world, rng, depth - 1)
     } else {
         let unit_direction = r.direction().normalize();
         // From 0 to 1 when down to up
@@ -185,9 +219,10 @@ fn ray_color(r: Ray, world: &World) -> Vec3 {
 fn main() {
     // Image
     const ASPECT_RATIO: f32 = 16. / 9.;
-    const IMAGE_WIDTH: u32 = 3840;
+    const IMAGE_WIDTH: u32 = 640;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
     const SAMPLES_PER_PIXEL: u32 = 128;
+    const MAX_DEPTH: u32 = 8;
 
     // World
     let world = vec![
@@ -237,15 +272,14 @@ fn main() {
                                 let uv = (ij + random) / (wh - Vec2::ONE);
 
                                 // Accumulate color seen in this sample
-                                color += ray_color(camera.get_ray(uv), world);
+                                color += ray_color(camera.get_ray(uv), world, &mut rng, MAX_DEPTH);
                             }
 
                             // Average samples, clamp and output to 8bpp RGB buffer
-                            *pixel = Color(
-                                (color / SAMPLES_PER_PIXEL as f32)
-                                    .clamp(Vec3::ZERO, Vec3::splat(0.9999)),
-                            )
-                            .into();
+                            *pixel = Color(color / SAMPLES_PER_PIXEL as f32)
+                                .sqrt()
+                                .clamp(0., 0.9999)
+                                .into();
                         }
                     }
 
