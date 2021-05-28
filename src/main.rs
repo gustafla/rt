@@ -4,12 +4,14 @@ use rand_xorshift::XorShiftRng;
 use std::convert::TryFrom;
 use std::ops::Range;
 
+const COLOR_CHANNELS: usize = 3;
+type OutputColor = [u8; COLOR_CHANNELS];
 struct Color(Vec3);
 
-impl From<Color> for image::Rgb<u8> {
+impl From<Color> for OutputColor {
     fn from(color: Color) -> Self {
         let c = color.0 * 256.;
-        Self([c.x as u8, c.y as u8, c.z as u8])
+        [c.x as u8, c.y as u8, c.z as u8]
     }
 }
 
@@ -202,7 +204,7 @@ fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
         return Vec3::ZERO;
     }
 
-    if let Some(hit) = world.hit(&r, 0.0001..f32::INFINITY) {
+    if let Some(hit) = world.hit(&r, 0.001..f32::INFINITY) {
         // Diffuse ray (lambertian-ish distribution)
         let target = hit.position + hit.normal + random_vec3_in_sphere(rng).normalize();
         let r = Ray::new(hit.position, target - hit.position);
@@ -219,9 +221,9 @@ fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
 fn main() {
     // Image
     const ASPECT_RATIO: f32 = 16. / 9.;
-    const IMAGE_WIDTH: u32 = 640;
+    const IMAGE_WIDTH: u32 = 3840;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
-    const SAMPLES_PER_PIXEL: u32 = 128;
+    const SAMPLES_PER_PIXEL: u32 = 256;
     const MAX_DEPTH: u32 = 8;
 
     // World
@@ -237,7 +239,7 @@ fn main() {
     let nthreads = u32::try_from(num_cpus::get()).unwrap().min(IMAGE_HEIGHT);
     let lines_per_thread = IMAGE_HEIGHT / nthreads;
     let rounding_error_lines = IMAGE_HEIGHT - lines_per_thread * nthreads;
-    let subpixel_data = crossbeam::scope(|s| {
+    let pixel_data: Vec<u8> = crossbeam::scope(|s| {
         let threads: Vec<_> = (0..nthreads)
             .into_iter()
             .map(|thread| {
@@ -251,10 +253,16 @@ fn main() {
                         lines_per_thread
                     };
 
-                    // Color the pixels
-                    let mut buf = image::RgbImage::new(IMAGE_WIDTH, lines);
+                    // Allocate storage for output pixel data
+                    let mut buf = Vec::with_capacity(
+                        usize::try_from(IMAGE_WIDTH).unwrap()
+                            * usize::try_from(lines).unwrap()
+                            * COLOR_CHANNELS,
+                    );
+
+                    // Render
                     let mut rng = XorShiftRng::seed_from_u64(thread.into());
-                    for (j, line) in buf.enumerate_rows_mut() {
+                    for j in 0..lines {
                         let mut j = thread * lines_per_thread + j;
                         if thread == 0 {
                             eprint!("Scanlines remaining: {:>5}\r", lines - j - 1);
@@ -262,7 +270,7 @@ fn main() {
                             j += rounding_error_lines;
                         }
 
-                        for (i, _, pixel) in line {
+                        for i in 0..IMAGE_WIDTH {
                             let mut color = Vec3::ZERO;
                             for _ in 0..SAMPLES_PER_PIXEL {
                                 // Ray through viewport in right handed space
@@ -276,15 +284,16 @@ fn main() {
                             }
 
                             // Average samples, clamp and output to 8bpp RGB buffer
-                            *pixel = Color(color / SAMPLES_PER_PIXEL as f32)
-                                .sqrt()
-                                .clamp(0., 0.9999)
-                                .into();
+                            buf.extend_from_slice(&OutputColor::from(
+                                Color(color / SAMPLES_PER_PIXEL as f32)
+                                    .sqrt()
+                                    .clamp(0., 0.9999),
+                            ));
                         }
                     }
 
                     // Return the buffer to be concatenated
-                    buf.into_vec()
+                    buf
                 })
             })
             .collect();
@@ -297,14 +306,19 @@ fn main() {
     })
     .unwrap();
 
-    // Construct image from results
-    let output = image::RgbImage::from_vec(IMAGE_WIDTH, IMAGE_HEIGHT, subpixel_data).unwrap();
-
-    // Output file
+    // Encode PNG from results
     let output_file_path = std::env::args_os()
         .nth(1)
         .unwrap_or_else(|| std::ffi::OsString::from("image.png"));
-    output.save(&output_file_path).unwrap();
+    {
+        let file = std::fs::File::create(&output_file_path).unwrap();
+        let w = std::io::BufWriter::new(file);
+        let mut encoder = png::Encoder::new(w, IMAGE_WIDTH, IMAGE_HEIGHT);
+        encoder.set_color(png::ColorType::RGB);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&pixel_data).unwrap();
+    }
     eprintln!("\nDone.");
     std::process::Command::new("imv")
         .args(&[output_file_path])
