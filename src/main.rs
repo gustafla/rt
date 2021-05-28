@@ -175,15 +175,14 @@ fn main() {
     let lines_per_thread = IMAGE_HEIGHT / nthreads;
     let rounding_error_lines = IMAGE_HEIGHT - lines_per_thread * nthreads;
     let subpixel_data = crossbeam::scope(|s| {
-        // Run n threads (and maybe one extra for last few rounding error lines)
-        let threads: Vec<_> = (0..nthreads + if rounding_error_lines > 0 { 1 } else { 0 })
+        let threads: Vec<_> = (0..nthreads)
             .into_iter()
             .map(|thread| {
                 let world = &world;
                 s.spawn(move |_| {
-                    // Account for rounding error with extra n+1:th thread
-                    let lines = if thread == nthreads {
-                        rounding_error_lines
+                    // Account for rounding error in the first thread
+                    let lines = if thread == 0 {
+                        lines_per_thread + rounding_error_lines
                     } else {
                         lines_per_thread
                     };
@@ -191,10 +190,12 @@ fn main() {
                     // Color the pixels
                     let mut buf = image::RgbImage::new(IMAGE_WIDTH, lines);
                     for (j, line) in buf.enumerate_rows_mut() {
+                        let mut j = thread * lines_per_thread + j;
                         if thread == 0 {
-                            eprint!("Scanlines remaining: {:>5}\r", (lines - j - 1) * nthreads);
+                            eprint!("Scanlines remaining: {:>5}\r", lines - j - 1);
+                        } else {
+                            j += rounding_error_lines;
                         }
-                        let j = thread * lines_per_thread + j;
 
                         for (i, _, pixel) in line {
                             // Ray through viewport in right handed space
