@@ -1,7 +1,6 @@
 use glam::Vec3;
 use std::convert::TryFrom;
 use std::ops::Range;
-use std::sync::Arc;
 
 struct Color(Vec3);
 
@@ -72,9 +71,7 @@ trait Hit {
 }
 
 type WorldItem = Box<dyn Hit + Send + Sync>;
-// TODO remove this Arc by somehow allowing all threads to borrow a World. Perhaps with crossbeam?
-// Cannot make World itself clonable as it would violate object safety.
-type World = Arc<Vec<WorldItem>>;
+type World = [WorldItem];
 
 impl Hit for World {
     fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
@@ -131,8 +128,8 @@ impl Hit for Sphere {
     }
 }
 
-fn ray_color(r: Ray, world: World) -> Color {
-    if let Some(hit) = world.hit(&r, 0.0..f32::INFINITY) {
+fn ray_color(r: &Ray, world: &World) -> Color {
+    if let Some(hit) = world.hit(r, 0.0..f32::INFINITY) {
         (0.5 * (hit.normal + Vec3::ONE)).into()
     } else {
         let unit_direction = r.direction().normalize();
@@ -143,17 +140,17 @@ fn ray_color(r: Ray, world: World) -> Color {
     }
 }
 
-fn main() -> Result<(), image::error::ImageError> {
+fn main() {
     // Image
     const ASPECT_RATIO: f32 = 16. / 9.;
     const IMAGE_WIDTH: u32 = 7680;
     const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
 
     // World
-    let world = Arc::new(vec![
+    let world = vec![
         Box::new(Sphere::new(Vec3::new(0., 0., -1.), 0.5)) as WorldItem,
         Box::new(Sphere::new(Vec3::new(0., -100.5, -1.), 100.)),
-    ]);
+    ];
 
     // Camera
     let viewport_height = 2.;
@@ -174,68 +171,68 @@ fn main() -> Result<(), image::error::ImageError> {
         );
 
     // Render using all cpu cores
-    let cpus = num_cpus::get();
-    let mut threads = Vec::with_capacity(cpus + 1);
-    let cpus = u32::try_from(cpus).unwrap().min(IMAGE_HEIGHT);
-    let lines_per_thread = IMAGE_HEIGHT / cpus;
-    let rounding_error_lines = IMAGE_HEIGHT - lines_per_thread * cpus;
-    for thread in 0..cpus + if rounding_error_lines > 0 { 1 } else { 0 } {
-        let world = world.clone();
-        threads.push(std::thread::spawn(move || {
-            // Account for rounding error with extra n+1:th thread
-            let lines = if thread == cpus {
-                rounding_error_lines
-            } else {
-                lines_per_thread
-            };
+    let nthreads = u32::try_from(num_cpus::get()).unwrap().min(IMAGE_HEIGHT);
+    let lines_per_thread = IMAGE_HEIGHT / nthreads;
+    let rounding_error_lines = IMAGE_HEIGHT - lines_per_thread * nthreads;
+    let subpixel_data = crossbeam::scope(|s| {
+        // Run n threads (and maybe one extra for last few rounding error lines)
+        let threads: Vec<_> = (0..nthreads + if rounding_error_lines > 0 { 1 } else { 0 })
+            .into_iter()
+            .map(|thread| {
+                let world = &world;
+                s.spawn(move |_| {
+                    // Account for rounding error with extra n+1:th thread
+                    let lines = if thread == nthreads {
+                        rounding_error_lines
+                    } else {
+                        lines_per_thread
+                    };
 
-            // Construct a buffer
-            let mut buf = image::RgbImage::new(IMAGE_WIDTH, lines);
+                    // Color the pixels
+                    let mut buf = image::RgbImage::new(IMAGE_WIDTH, lines);
+                    for (j, line) in buf.enumerate_rows_mut() {
+                        if thread == 0 {
+                            eprint!("Scanlines remaining: {:>5}\r", (lines - j - 1) * nthreads);
+                        }
+                        let j = thread * lines_per_thread + j;
 
-            // Fill the buffer
-            for (j, line) in buf.enumerate_rows_mut() {
-                if thread == 0 {
-                    eprint!("Scanlines remaining: {:>5}\r", (lines - j - 1) * cpus);
-                }
-                let j = thread * lines_per_thread + j;
+                        for (i, _, pixel) in line {
+                            // Ray through viewport in right handed space
+                            let u = i as f32 / (IMAGE_WIDTH - 1) as f32;
+                            let v = 1. - (j as f32 / (IMAGE_HEIGHT - 1) as f32);
+                            let uv_on_plane = lower_left_corner + u * horizontal + v * vertical;
+                            let r = Ray::new(origin, uv_on_plane - origin);
 
-                for (i, _, pixel) in line {
-                    // Ray through viewport in right handed space
-                    let u = i as f32 / (IMAGE_WIDTH - 1) as f32; // i to u
-                    let v = 1. - (j as f32 / (IMAGE_HEIGHT - 1) as f32); // j (y down) to v (y up)
-                    let uv_on_plane = lower_left_corner + u * horizontal + v * vertical;
-                    let r = Ray::new(origin, uv_on_plane - origin);
+                            // Store color seen in this pixel
+                            *pixel = ray_color(&r, world).into();
+                        }
+                    }
 
-                    // Store color seen in this pixel
-                    *pixel = ray_color(r, world.clone()).into();
-                }
-            }
+                    // Return the buffer to be concatenated
+                    buf.into_vec()
+                })
+            })
+            .collect();
 
-            // Return the buffer to be concatenated
-            buf
-        }));
-    }
-
-    // Construct single image by concatenating thread results
-    let buf = image::RgbImage::from_vec(
-        IMAGE_WIDTH,
-        IMAGE_HEIGHT,
+        // Concatenate thread results to a vec of subpixels
         threads
             .into_iter()
-            .flat_map(|t| t.join().unwrap().into_vec())
-            .collect(),
-    )
+            .flat_map(|t| t.join().unwrap())
+            .collect()
+    })
     .unwrap();
+
+    // Construct image from results
+    let output = image::RgbImage::from_vec(IMAGE_WIDTH, IMAGE_HEIGHT, subpixel_data).unwrap();
 
     // Output file
     let output_file_path = std::env::args_os()
         .nth(1)
         .unwrap_or_else(|| std::ffi::OsString::from("image.png"));
-    buf.save(&output_file_path)?;
+    output.save(&output_file_path).unwrap();
     eprintln!("\nDone.");
     std::process::Command::new("imv")
         .args(&[output_file_path])
         .output()
         .ok();
-    Ok(())
 }
