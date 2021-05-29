@@ -38,7 +38,7 @@ fn random_vec3(rng: &mut impl Rng, r: Range<f32>) -> Vec3 {
     Vec3::new(
         rng.gen_range(r.clone()),
         rng.gen_range(r.clone()),
-        rng.gen_range(r.clone()),
+        rng.gen_range(r),
     )
 }
 
@@ -203,7 +203,7 @@ impl Hit for Sphere {
 }
 
 fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
-    if depth <= 0 {
+    if depth == 0 {
         return Vec3::ZERO;
     }
 
@@ -224,8 +224,8 @@ fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
 fn main() {
     // Image
     const ASPECT_RATIO: f32 = 16. / 9.;
-    const IMAGE_WIDTH: u32 = 3840;
-    const IMAGE_HEIGHT: u32 = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as u32;
+    const IMAGE_WIDTH: usize = 3840;
+    const IMAGE_HEIGHT: usize = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as usize;
     const SAMPLES_PER_PIXEL: u32 = 256;
     const MAX_DEPTH: u32 = 8;
 
@@ -239,14 +239,9 @@ fn main() {
     let camera = Camera::new(ASPECT_RATIO);
 
     // Render using all cpu cores
-    let nthreads = num_cpus::get().min(usize::try_from(IMAGE_HEIGHT).unwrap());
+    let nthreads = num_cpus::get();
     // Allocate image buffer
-    let mut pixel_data = vec![
-        0u8;
-        usize::try_from(IMAGE_WIDTH).unwrap()
-            * usize::try_from(IMAGE_HEIGHT).unwrap()
-            * COLOR_CHANNELS
-    ];
+    let mut pixel_data = vec![0u8; IMAGE_WIDTH * IMAGE_HEIGHT * COLOR_CHANNELS];
     // Divide buffer into chunks for threads to work on
     const CHUNK_PIXELS: usize = 4096;
     let chunks: Mutex<Vec<_>> = Mutex::new(
@@ -268,7 +263,7 @@ fn main() {
                     let chunk_offset = CHUNK_PIXELS * i;
                     for i in 0..chunk.len() / COLOR_CHANNELS {
                         // Calculate pixel coordinates
-                        let pixel = u32::try_from(chunk_offset + i).unwrap();
+                        let pixel = chunk_offset + i;
                         let xy = Vec2::new(
                             (pixel % IMAGE_WIDTH) as f32,
                             (IMAGE_HEIGHT - 1 - (pixel / IMAGE_WIDTH)) as f32,
@@ -317,13 +312,13 @@ fn main() {
 
 fn write_png(
     path: impl AsRef<Path>,
-    width: u32,
-    height: u32,
+    width: usize,
+    height: usize,
     rgb8_data: &[u8],
 ) -> Result<(), Box<dyn Error>> {
     let file = std::fs::File::create(&path)?;
     let w = std::io::BufWriter::new(file);
-    let mut encoder = png::Encoder::new(w, width, height);
+    let mut encoder = png::Encoder::new(w, u32::try_from(width)?, u32::try_from(height)?);
     encoder.set_color(png::ColorType::RGB);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header()?;
