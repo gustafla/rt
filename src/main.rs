@@ -322,6 +322,6 @@ fn main() {
     eprintln!("\nDone.");
     std::process::Command::new("imv")
         .args(&[output_file_path])
-        .output()
+        .spawn()
         .ok();
 }
