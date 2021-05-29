@@ -2,7 +2,9 @@ use glam::{Vec2, Vec3};
 use rand::prelude::*;
 use rand_xorshift::XorShiftRng;
 use std::convert::TryFrom;
+use std::error::Error;
 use std::ops::Range;
+use std::path::Path;
 
 const COLOR_CHANNELS: usize = 3;
 type OutputColor = [u8; COLOR_CHANNELS];
@@ -310,18 +312,26 @@ fn main() {
     let output_file_path = std::env::args_os()
         .nth(1)
         .unwrap_or_else(|| std::ffi::OsString::from("image.png"));
-    {
-        let file = std::fs::File::create(&output_file_path).unwrap();
-        let w = std::io::BufWriter::new(file);
-        let mut encoder = png::Encoder::new(w, IMAGE_WIDTH, IMAGE_HEIGHT);
-        encoder.set_color(png::ColorType::RGB);
-        encoder.set_depth(png::BitDepth::Eight);
-        let mut writer = encoder.write_header().unwrap();
-        writer.write_image_data(&pixel_data).unwrap();
-    }
+    write_png(&output_file_path, IMAGE_WIDTH, IMAGE_HEIGHT, &pixel_data).unwrap();
     eprintln!("\nDone.");
     std::process::Command::new("imv")
         .args(&[output_file_path])
         .spawn()
         .ok();
+}
+
+fn write_png(
+    path: impl AsRef<Path>,
+    width: u32,
+    height: u32,
+    rgb8_data: &[u8],
+) -> Result<(), Box<dyn Error>> {
+    let file = std::fs::File::create(&path)?;
+    let w = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(w, width, height);
+    encoder.set_color(png::ColorType::RGB);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+    writer.write_image_data(&rgb8_data)?;
+    Ok(())
 }
