@@ -250,10 +250,10 @@ fn main() {
             .enumerate()
             .collect(),
     );
+    // Run the rendering threads
     crossbeam::scope(|s| {
-        let mut threads = Vec::with_capacity(nthreads);
         for _ in 0..nthreads {
-            threads.push(s.spawn(|_| {
+            s.spawn(|_| {
                 let mut rng = XorShiftRng::seed_from_u64(123);
 
                 while let Some((i, chunk)) = {
@@ -289,11 +289,7 @@ fn main() {
                         );
                     }
                 }
-            }))
-        }
-
-        for thread in threads {
-            thread.join().unwrap();
+            });
         }
     })
     .unwrap();
