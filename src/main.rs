@@ -251,7 +251,7 @@ fn main() {
             .collect(),
     );
     // Run the rendering threads
-    crossbeam::scope(|s| {
+    crossbeam_utils::thread::scope(|s| {
         for _ in 0..nthreads {
             s.spawn(|_| {
                 let mut rng = XorShiftRng::seed_from_u64(123);
