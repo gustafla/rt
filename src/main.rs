@@ -1,4 +1,5 @@
 use glam::{Vec2, Vec3};
+use parking_lot::Mutex;
 use rand::prelude::*;
 use rand_xorshift::XorShiftRng;
 use std::convert::TryFrom;
@@ -238,73 +239,67 @@ fn main() {
     let camera = Camera::new(ASPECT_RATIO);
 
     // Render using all cpu cores
-    let nthreads = u32::try_from(num_cpus::get()).unwrap().min(IMAGE_HEIGHT);
-    let lines_per_thread = IMAGE_HEIGHT / nthreads;
-    let rounding_error_lines = IMAGE_HEIGHT - lines_per_thread * nthreads;
-    let pixel_data: Vec<u8> = crossbeam::scope(|s| {
-        let threads: Vec<_> = (0..nthreads)
-            .into_iter()
-            .map(|thread| {
-                let world = &world;
-                let camera = &camera;
-                s.spawn(move |_| {
-                    // Account for rounding error in the first thread
-                    let lines = if thread == 0 {
-                        lines_per_thread + rounding_error_lines
-                    } else {
-                        lines_per_thread
-                    };
+    let nthreads = num_cpus::get().min(usize::try_from(IMAGE_HEIGHT).unwrap());
+    // Allocate image buffer
+    let mut pixel_data = vec![
+        0u8;
+        usize::try_from(IMAGE_WIDTH).unwrap()
+            * usize::try_from(IMAGE_HEIGHT).unwrap()
+            * COLOR_CHANNELS
+    ];
+    // Divide buffer into chunks for threads to work on
+    const CHUNK_PIXELS: usize = 4096;
+    let chunks: Mutex<Vec<_>> = Mutex::new(
+        pixel_data
+            .chunks_mut(CHUNK_PIXELS * COLOR_CHANNELS)
+            .enumerate()
+            .collect(),
+    );
+    crossbeam::scope(|s| {
+        let mut threads = Vec::with_capacity(nthreads);
+        for _ in 0..nthreads {
+            threads.push(s.spawn(|_| {
+                let mut rng = XorShiftRng::seed_from_u64(123);
 
-                    // Allocate storage for output pixel data
-                    let mut buf = Vec::with_capacity(
-                        usize::try_from(IMAGE_WIDTH).unwrap()
-                            * usize::try_from(lines).unwrap()
-                            * COLOR_CHANNELS,
-                    );
+                while let Some((i, chunk)) = {
+                    let tmp = chunks.lock().pop();
+                    tmp // Drop mutex guard
+                } {
+                    let chunk_offset = CHUNK_PIXELS * i;
+                    for i in 0..chunk.len() / COLOR_CHANNELS {
+                        // Calculate pixel coordinates
+                        let pixel = u32::try_from(chunk_offset + i).unwrap();
+                        let xy = Vec2::new(
+                            (pixel % IMAGE_WIDTH) as f32,
+                            (IMAGE_HEIGHT - 1 - (pixel / IMAGE_WIDTH)) as f32,
+                        );
 
-                    // Render
-                    let mut rng = XorShiftRng::seed_from_u64(thread.into());
-                    for j in 0..lines {
-                        let mut j = thread * lines_per_thread + j;
-                        if thread == 0 {
-                            eprint!("Scanlines remaining: {:>5}\r", lines - j - 1);
-                        } else {
-                            j += rounding_error_lines;
+                        // Accumulate color from rays
+                        let mut color = Vec3::ZERO;
+                        for _ in 0..SAMPLES_PER_PIXEL {
+                            // Ray through viewport in right handed space
+                            let random = Vec2::new(rng.gen(), rng.gen());
+                            let wh = Vec2::new(IMAGE_WIDTH as f32, IMAGE_HEIGHT as f32);
+                            let uv = (xy + random) / (wh - Vec2::ONE);
+                            color += ray_color(camera.get_ray(uv), &world, &mut rng, MAX_DEPTH);
                         }
 
-                        for i in 0..IMAGE_WIDTH {
-                            let mut color = Vec3::ZERO;
-                            for _ in 0..SAMPLES_PER_PIXEL {
-                                // Ray through viewport in right handed space
-                                let random = Vec2::new(rng.gen(), rng.gen());
-                                let ij = Vec2::new(i as f32, (IMAGE_HEIGHT - 1 - j) as f32);
-                                let wh = Vec2::new(IMAGE_WIDTH as f32, IMAGE_HEIGHT as f32);
-                                let uv = (ij + random) / (wh - Vec2::ONE);
-
-                                // Accumulate color seen in this sample
-                                color += ray_color(camera.get_ray(uv), world, &mut rng, MAX_DEPTH);
-                            }
-
-                            // Average samples, clamp and output to 8bpp RGB buffer
-                            buf.extend_from_slice(&OutputColor::from(
+                        // Average samples, clamp and output to 8bpp RGB buffer
+                        chunk[i * COLOR_CHANNELS..][..COLOR_CHANNELS].copy_from_slice(
+                            &OutputColor::from(
                                 Color(color / SAMPLES_PER_PIXEL as f32)
                                     .sqrt()
                                     .clamp(0., 0.9999),
-                            ));
-                        }
+                            ),
+                        );
                     }
+                }
+            }))
+        }
 
-                    // Return the buffer to be concatenated
-                    buf
-                })
-            })
-            .collect();
-
-        // Concatenate thread results to a vec of subpixels
-        threads
-            .into_iter()
-            .flat_map(|t| t.join().unwrap())
-            .collect()
+        for thread in threads {
+            thread.join().unwrap();
+        }
     })
     .unwrap();
 
