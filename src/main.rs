@@ -7,20 +7,17 @@ use std::error::Error;
 use std::ops::Range;
 use std::path::Path;
 
-const COLOR_CHANNELS: usize = 3;
-type OutputColor = [u8; COLOR_CHANNELS];
 struct Color(Vec3);
-
-impl From<Color> for OutputColor {
-    fn from(color: Color) -> Self {
-        let c = color.0 * 256.;
-        [c.x as u8, c.y as u8, c.z as u8]
-    }
-}
 
 impl From<Vec3> for Color {
     fn from(v: Vec3) -> Self {
         Self(v)
+    }
+}
+
+impl From<Color> for Vec3 {
+    fn from(c: Color) -> Self {
+        c.0
     }
 }
 
@@ -34,20 +31,13 @@ impl Color {
     }
 }
 
-fn random_vec3(rng: &mut impl Rng, r: Range<f32>) -> Vec3 {
-    Vec3::new(
-        rng.gen_range(r.clone()),
-        rng.gen_range(r.clone()),
-        rng.gen_range(r),
-    )
-}
+const COLOR_CHANNELS: usize = 3;
+type OutputColor = [u8; COLOR_CHANNELS];
 
-fn random_vec3_in_sphere(rng: &mut impl Rng) -> Vec3 {
-    loop {
-        let v = random_vec3(rng, -1.0..1.);
-        if v.length() < 1. {
-            return v;
-        }
+impl From<Color> for OutputColor {
+    fn from(color: Color) -> Self {
+        let c = Vec3::from(color.sqrt().clamp(0., 0.999)) * 256.;
+        [c.x as u8, c.y as u8, c.z as u8]
     }
 }
 
@@ -202,6 +192,15 @@ impl Hit for Sphere {
     }
 }
 
+fn random_in_sphere(rng: &mut impl Rng) -> Vec3 {
+    loop {
+        let v = Vec3::from(rng.gen::<[f32; 3]>()) * 2. - Vec3::ONE;
+        if v.length() < 1. {
+            return v;
+        }
+    }
+}
+
 fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
     if depth == 0 {
         return Vec3::ZERO;
@@ -209,7 +208,7 @@ fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
 
     if let Some(hit) = world.hit(&r, 0.001..f32::INFINITY) {
         // Diffuse ray (lambertian-ish distribution)
-        let target = hit.position + hit.normal + random_vec3_in_sphere(rng).normalize();
+        let target = hit.position + hit.normal + random_in_sphere(rng).normalize();
         let r = Ray::new(hit.position, target - hit.position);
         0.5 * ray_color(r, world, rng, depth - 1)
     } else {
@@ -273,7 +272,7 @@ fn main() {
                         let mut color = Vec3::ZERO;
                         for _ in 0..SAMPLES_PER_PIXEL {
                             // Ray through viewport in right handed space
-                            let random = Vec2::new(rng.gen(), rng.gen());
+                            let random = Vec2::from(rng.gen::<[f32; 2]>());
                             let wh = Vec2::new(IMAGE_WIDTH as f32, IMAGE_HEIGHT as f32);
                             let uv = (xy + random) / (wh - Vec2::ONE);
                             color += ray_color(camera.get_ray(uv), &world, &mut rng, MAX_DEPTH);
@@ -281,11 +280,7 @@ fn main() {
 
                         // Average samples, clamp and output to 8bpp RGB buffer
                         chunk[i * COLOR_CHANNELS..][..COLOR_CHANNELS].copy_from_slice(
-                            &OutputColor::from(
-                                Color(color / SAMPLES_PER_PIXEL as f32)
-                                    .sqrt()
-                                    .clamp(0., 0.9999),
-                            ),
+                            &OutputColor::from(Color::from(color / SAMPLES_PER_PIXEL as f32)),
                         );
                     }
                 }
