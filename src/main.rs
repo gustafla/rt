@@ -201,6 +201,15 @@ fn random_in_sphere(rng: &mut impl Rng) -> Vec3 {
     }
 }
 
+fn random_in_hemisphere(rng: &mut impl Rng, normal: Vec3) -> Vec3 {
+    let v = random_in_sphere(rng);
+    if v.dot(normal) > 0. {
+        v
+    } else {
+        -v
+    }
+}
+
 fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
     if depth == 0 {
         return Vec3::ZERO;
@@ -208,7 +217,7 @@ fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
 
     if let Some(hit) = world.hit(&r, 0.001..f32::INFINITY) {
         // Diffuse ray (lambertian-ish distribution)
-        let target = hit.position + hit.normal + random_in_sphere(rng).normalize();
+        let target = hit.position + random_in_hemisphere(rng, hit.normal);
         let r = Ray::new(hit.position, target - hit.position);
         0.5 * ray_color(r, world, rng, depth - 1)
     } else {
