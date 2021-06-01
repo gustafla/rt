@@ -6,6 +6,7 @@ use std::convert::TryFrom;
 use std::error::Error;
 use std::ops::Range;
 use std::path::Path;
+use std::sync::Arc;
 
 struct Color(Vec3);
 
@@ -110,12 +111,13 @@ impl Camera {
 struct HitRecord {
     pub position: Vec3,
     pub normal: Vec3,
+    pub material: Material,
     pub t: f32,
     pub front_facing: bool,
 }
 
 impl HitRecord {
-    pub fn new(position: Vec3, outward_normal: Vec3, t: f32, r: &Ray) -> Self {
+    pub fn new(position: Vec3, outward_normal: Vec3, material: Material, t: f32, r: &Ray) -> Self {
         let front_facing = r.direction().dot(outward_normal) < 0.;
         Self {
             position,
@@ -124,6 +126,7 @@ impl HitRecord {
             } else {
                 -outward_normal
             },
+            material,
             t,
             front_facing,
         }
@@ -156,11 +159,16 @@ impl Hit for World {
 struct Sphere {
     center: Vec3,
     radius: f32,
+    material: Material,
 }
 
 impl Sphere {
-    fn new(center: Vec3, radius: f32) -> Self {
-        Self { center, radius }
+    fn new(center: Vec3, radius: f32, material: Material) -> Self {
+        Self {
+            center,
+            radius,
+            material,
+        }
     }
 }
 
@@ -188,20 +196,33 @@ impl Hit for Sphere {
 
         let position = r.at(root);
         let outward_normal = (position - self.center) / self.radius;
-        Some(HitRecord::new(position, outward_normal, root, r))
+        Some(HitRecord::new(
+            position,
+            outward_normal,
+            self.material.clone(),
+            root,
+            r,
+        ))
     }
 }
 
-fn random_in_sphere(rng: &mut impl Rng) -> Vec3 {
+trait Scatter {
+    fn scatter(&self, rng: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)>;
+}
+
+type Material = Arc<dyn Scatter + Send + Sync>;
+
+fn random_in_sphere(rng: &mut XorShiftRng) -> Vec3 {
     loop {
         let v = Vec3::from(rng.gen::<[f32; 3]>()) * 2. - Vec3::ONE;
-        if v.length() < 1. {
+        let len = v.length();
+        if len < 1. && len > 0.0001 {
             return v;
         }
     }
 }
 
-fn random_in_hemisphere(rng: &mut impl Rng, normal: Vec3) -> Vec3 {
+fn random_in_hemisphere(rng: &mut XorShiftRng, normal: Vec3) -> Vec3 {
     let v = random_in_sphere(rng);
     if v.dot(normal) > 0. {
         v
@@ -210,16 +231,61 @@ fn random_in_hemisphere(rng: &mut impl Rng, normal: Vec3) -> Vec3 {
     }
 }
 
-fn ray_color(r: Ray, world: &World, rng: &mut impl Rng, depth: u32) -> Vec3 {
+struct Lambertian {
+    albedo: Vec3,
+}
+
+impl Lambertian {
+    pub fn new(albedo: Vec3) -> Self {
+        Self { albedo }
+    }
+}
+
+impl Scatter for Lambertian {
+    fn scatter(&self, rng: &mut XorShiftRng, _: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+        Some((
+            self.albedo,
+            Ray::new(hit.position, random_in_hemisphere(rng, hit.normal)),
+        ))
+    }
+}
+
+fn reflect(v: Vec3, normal: Vec3) -> Vec3 {
+    v - 2. * v.dot(normal) * normal
+}
+
+struct Metal {
+    albedo: Vec3,
+}
+
+impl Metal {
+    pub fn new(albedo: Vec3) -> Self {
+        Self { albedo }
+    }
+}
+
+impl Scatter for Metal {
+    fn scatter(&self, _: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+        let reflected = reflect(r.direction, hit.normal).normalize();
+        if reflected.dot(hit.normal) > 0. {
+            Some((self.albedo, Ray::new(hit.position, reflected)))
+        } else {
+            None
+        }
+    }
+}
+
+fn ray_color(r: Ray, world: &World, rng: &mut XorShiftRng, depth: u32) -> Vec3 {
     if depth == 0 {
         return Vec3::ZERO;
     }
 
     if let Some(hit) = world.hit(&r, 0.001..f32::INFINITY) {
-        // Diffuse ray (lambertian-ish distribution)
-        let target = hit.position + random_in_hemisphere(rng, hit.normal);
-        let r = Ray::new(hit.position, target - hit.position);
-        0.5 * ray_color(r, world, rng, depth - 1)
+        if let Some((att, r)) = hit.material.scatter(rng, &r, &hit) {
+            att * ray_color(r, world, rng, depth - 1)
+        } else {
+            Vec3::ZERO
+        }
     } else {
         let unit_direction = r.direction().normalize();
         // From 0 to 1 when down to up
@@ -239,8 +305,30 @@ fn main() {
 
     // World
     let world = vec![
-        Box::new(Sphere::new(Vec3::new(0., 0., -1.), 0.5)) as WorldItem,
-        Box::new(Sphere::new(Vec3::new(0., -100.5, -1.), 100.)),
+        // Ground
+        Box::new(Sphere::new(
+            Vec3::new(0., -100.5, -1.),
+            100.,
+            Arc::new(Lambertian::new(Vec3::new(0.8, 0.8, 0.0))),
+        )) as WorldItem,
+        // Center
+        Box::new(Sphere::new(
+            Vec3::new(0., 0., -1.),
+            0.5,
+            Arc::new(Lambertian::new(Vec3::new(0.7, 0.3, 0.3))),
+        )),
+        // Left
+        Box::new(Sphere::new(
+            Vec3::new(-1., 0., -1.),
+            0.5,
+            Arc::new(Metal::new(Vec3::new(0.8, 0.8, 0.8))),
+        )),
+        // Right
+        Box::new(Sphere::new(
+            Vec3::new(1., 0., -1.),
+            0.5,
+            Arc::new(Metal::new(Vec3::new(0.8, 0.6, 0.2))),
+        )),
     ];
 
     // Camera
