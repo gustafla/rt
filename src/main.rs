@@ -155,19 +155,21 @@ fn reflect(v: Vec3, normal: Vec3) -> Vec3 {
 
 struct Metal {
     albedo: Vec3,
+    fuzz: f32,
 }
 
 impl Metal {
-    pub fn new(albedo: Vec3) -> Self {
-        Self { albedo }
+    pub fn new(albedo: Vec3, fuzz: f32) -> Self {
+        Self { albedo, fuzz }
     }
 }
 
 impl Scatter for Metal {
-    fn scatter(&self, _: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+    fn scatter(&self, rng: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
         let reflected = reflect(r.direction, hit.normal).normalize();
-        if reflected.dot(hit.normal) > 0. {
-            Some((self.albedo, Ray::new(hit.position, reflected)))
+        let scattered = reflected + self.fuzz * random_in_sphere(rng);
+        if scattered.dot(hit.normal) > 0. {
+            Some((self.albedo, Ray::new(hit.position, scattered)))
         } else {
             None
         }
@@ -315,12 +317,12 @@ fn main() {
         // Left
         Object {
             surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), 0.5)),
-            material: Box::new(Metal::new(Vec3::new(0.8, 0.8, 0.8))),
+            material: Box::new(Metal::new(Vec3::new(0.8, 0.8, 0.8), 0.3)),
         },
         // Right
         Object {
             surface: Box::new(Sphere::new(Vec3::new(1., 0., -1.), 0.5)),
-            material: Box::new(Metal::new(Vec3::new(0.8, 0.6, 0.2))),
+            material: Box::new(Metal::new(Vec3::new(0.8, 0.6, 0.2), 1.)),
         },
     ]);
 
