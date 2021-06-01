@@ -6,7 +6,6 @@ use std::convert::TryFrom;
 use std::error::Error;
 use std::ops::Range;
 use std::path::Path;
-use std::sync::Arc;
 
 struct Color(Vec3);
 
@@ -108,109 +107,9 @@ impl Camera {
     }
 }
 
-struct HitRecord {
-    pub position: Vec3,
-    pub normal: Vec3,
-    pub material: Material,
-    pub t: f32,
-    pub front_facing: bool,
-}
-
-impl HitRecord {
-    pub fn new(position: Vec3, outward_normal: Vec3, material: Material, t: f32, r: &Ray) -> Self {
-        let front_facing = r.direction().dot(outward_normal) < 0.;
-        Self {
-            position,
-            normal: if front_facing {
-                outward_normal
-            } else {
-                -outward_normal
-            },
-            material,
-            t,
-            front_facing,
-        }
-    }
-}
-
-trait Hit {
-    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord>;
-}
-
-type WorldItem = Box<dyn Hit + Send + Sync>;
-type World = [WorldItem];
-
-impl Hit for World {
-    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
-        let mut nearest_hit = None;
-        let mut nearest_t = t_range.end;
-
-        for surface in self.iter() {
-            if let Some(hit) = surface.hit(r, t_range.start..nearest_t) {
-                nearest_t = hit.t;
-                nearest_hit = Some(hit);
-            }
-        }
-
-        nearest_hit
-    }
-}
-
-struct Sphere {
-    center: Vec3,
-    radius: f32,
-    material: Material,
-}
-
-impl Sphere {
-    fn new(center: Vec3, radius: f32, material: Material) -> Self {
-        Self {
-            center,
-            radius,
-            material,
-        }
-    }
-}
-
-impl Hit for Sphere {
-    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
-        let oc = r.origin() - self.center;
-        let a = r.direction().length().powi(2);
-        let half_b = oc.dot(r.direction());
-        let c = oc.length().powi(2) - self.radius.powi(2);
-
-        let discriminant = half_b.powi(2) - a * c;
-        if discriminant < 0. {
-            return None;
-        }
-
-        // Find the nearest root that lies in the acceptable range
-        let sqrtd = discriminant.sqrt();
-        let mut root = (-half_b - sqrtd) / a;
-        if root < t_range.start || t_range.end < root {
-            root = (-half_b + sqrtd) / a;
-            if root < t_range.start || t_range.end < root {
-                return None;
-            }
-        }
-
-        let position = r.at(root);
-        let outward_normal = (position - self.center) / self.radius;
-        Some(HitRecord::new(
-            position,
-            outward_normal,
-            self.material.clone(),
-            root,
-            r,
-        ))
-    }
-}
-
 trait Scatter {
     fn scatter(&self, rng: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)>;
 }
-
-type Material = Arc<dyn Scatter + Send + Sync>;
 
 fn random_in_sphere(rng: &mut XorShiftRng) -> Vec3 {
     loop {
@@ -275,13 +174,111 @@ impl Scatter for Metal {
     }
 }
 
+struct HitRecord {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub t: f32,
+    pub front_facing: bool,
+}
+
+impl HitRecord {
+    pub fn new(position: Vec3, outward_normal: Vec3, t: f32, r: &Ray) -> Self {
+        let front_facing = r.direction().dot(outward_normal) < 0.;
+        Self {
+            position,
+            normal: if front_facing {
+                outward_normal
+            } else {
+                -outward_normal
+            },
+            t,
+            front_facing,
+        }
+    }
+}
+
+trait Hit {
+    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord>;
+}
+
+type Surface = Box<dyn Hit + Send + Sync>;
+type Material = Box<dyn Scatter + Send + Sync>;
+
+struct Object {
+    pub surface: Surface,
+    pub material: Material,
+}
+
+struct World {
+    objects: Vec<Object>,
+}
+
+impl World {
+    pub fn new(objects: Vec<Object>) -> Self {
+        Self { objects }
+    }
+
+    pub fn traverse(&self, r: &Ray, t_min: f32) -> Option<(HitRecord, &Material)> {
+        let mut nearest_hit = None;
+        let mut nearest_t = f32::INFINITY;
+
+        for Object { surface, material } in self.objects.iter() {
+            if let Some(hit) = surface.hit(r, t_min..nearest_t) {
+                nearest_t = hit.t;
+                nearest_hit = Some((hit, material));
+            }
+        }
+
+        nearest_hit
+    }
+}
+
+struct Sphere {
+    center: Vec3,
+    radius: f32,
+}
+
+impl Sphere {
+    fn new(center: Vec3, radius: f32) -> Self {
+        Self { center, radius }
+    }
+}
+
+impl Hit for Sphere {
+    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
+        let oc = r.origin() - self.center;
+        let a = r.direction().length().powi(2);
+        let half_b = oc.dot(r.direction());
+        let c = oc.length().powi(2) - self.radius.powi(2);
+
+        let discriminant = half_b.powi(2) - a * c;
+        if discriminant < 0. {
+            return None;
+        }
+
+        // Find the nearest root that lies in the acceptable range
+        let sqrtd = discriminant.sqrt();
+        let mut root = (-half_b - sqrtd) / a;
+        if root < t_range.start || t_range.end < root {
+            root = (-half_b + sqrtd) / a;
+            if root < t_range.start || t_range.end < root {
+                return None;
+            }
+        }
+
+        let position = r.at(root);
+        let outward_normal = (position - self.center) / self.radius;
+        Some(HitRecord::new(position, outward_normal, root, r))
+    }
+}
+
 fn ray_color(r: Ray, world: &World, rng: &mut XorShiftRng, depth: u32) -> Vec3 {
     if depth == 0 {
         return Vec3::ZERO;
     }
 
-    if let Some(hit) = world.hit(&r, 0.001..f32::INFINITY) {
-        if let Some((att, r)) = hit.material.scatter(rng, &r, &hit) {
+    if let Some((hit, material)) = world.traverse(&r, 0.001) {
+        if let Some((att, r)) = material.scatter(rng, &r, &hit) {
             att * ray_color(r, world, rng, depth - 1)
         } else {
             Vec3::ZERO
@@ -304,32 +301,28 @@ fn main() {
     const MAX_DEPTH: u32 = 8;
 
     // World
-    let world = vec![
+    let world = World::new(vec![
         // Ground
-        Box::new(Sphere::new(
-            Vec3::new(0., -100.5, -1.),
-            100.,
-            Arc::new(Lambertian::new(Vec3::new(0.8, 0.8, 0.0))),
-        )) as WorldItem,
+        Object {
+            surface: Box::new(Sphere::new(Vec3::new(0., -100.5, -1.), 100.)),
+            material: Box::new(Lambertian::new(Vec3::new(0.8, 0.8, 0.0))),
+        },
         // Center
-        Box::new(Sphere::new(
-            Vec3::new(0., 0., -1.),
-            0.5,
-            Arc::new(Lambertian::new(Vec3::new(0.7, 0.3, 0.3))),
-        )),
+        Object {
+            surface: Box::new(Sphere::new(Vec3::new(0., 0., -1.), 0.5)),
+            material: Box::new(Lambertian::new(Vec3::new(0.7, 0.3, 0.3))),
+        },
         // Left
-        Box::new(Sphere::new(
-            Vec3::new(-1., 0., -1.),
-            0.5,
-            Arc::new(Metal::new(Vec3::new(0.8, 0.8, 0.8))),
-        )),
+        Object {
+            surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), 0.5)),
+            material: Box::new(Metal::new(Vec3::new(0.8, 0.8, 0.8))),
+        },
         // Right
-        Box::new(Sphere::new(
-            Vec3::new(1., 0., -1.),
-            0.5,
-            Arc::new(Metal::new(Vec3::new(0.8, 0.6, 0.2))),
-        )),
-    ];
+        Object {
+            surface: Box::new(Sphere::new(Vec3::new(1., 0., -1.), 0.5)),
+            material: Box::new(Metal::new(Vec3::new(0.8, 0.6, 0.2))),
+        },
+    ]);
 
     // Camera
     let camera = Camera::new(ASPECT_RATIO);
