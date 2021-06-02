@@ -121,15 +121,6 @@ fn random_in_sphere(rng: &mut XorShiftRng) -> Vec3 {
     }
 }
 
-fn random_in_hemisphere(rng: &mut XorShiftRng, normal: Vec3) -> Vec3 {
-    let v = random_in_sphere(rng);
-    if v.dot(normal) > 0. {
-        v
-    } else {
-        -v
-    }
-}
-
 struct Lambertian {
     albedo: Vec3,
 }
@@ -142,10 +133,11 @@ impl Lambertian {
 
 impl Scatter for Lambertian {
     fn scatter(&self, rng: &mut XorShiftRng, _: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
-        Some((
-            self.albedo,
-            Ray::new(hit.position, random_in_hemisphere(rng, hit.normal)),
-        ))
+        let mut direction = hit.normal + random_in_sphere(rng).normalize();
+        if direction.length_squared() < 0.001 {
+            direction = hit.normal;
+        }
+        Some((self.albedo, Ray::new(hit.position, direction)))
     }
 }
 
@@ -173,6 +165,52 @@ impl Scatter for Metal {
         } else {
             None
         }
+    }
+}
+
+fn refract(v: Vec3, normal: Vec3, refraction_ratio: f32) -> Vec3 {
+    let cos_theta = (-v).dot(normal);
+    let perpendicular = refraction_ratio * (v + cos_theta * normal);
+    let parallel = -(1. - perpendicular.length_squared()).abs().sqrt() * normal;
+    perpendicular + parallel
+}
+
+struct Dielectric {
+    refraction: f32,
+}
+
+impl Dielectric {
+    pub fn new(refraction: f32) -> Self {
+        Self { refraction }
+    }
+
+    fn reflectance(&self, cos_theta: f32) -> f32 {
+        // Schlick's approximation
+        let r0 = ((1. - self.refraction) / (1. + self.refraction)).powi(2);
+        r0 * (1. - r0) * (1. - cos_theta).powi(5)
+    }
+}
+
+impl Scatter for Dielectric {
+    fn scatter(&self, rng: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+        let refraction_ratio = if hit.front_facing {
+            1. / self.refraction
+        } else {
+            self.refraction
+        };
+
+        let direction = r.direction().normalize();
+        let cos_theta = (-direction).dot(hit.normal);
+        let sin_theta = (1. - cos_theta.powi(2)).sqrt();
+        let reflectance = self.reflectance(cos_theta);
+
+        let direction = if refraction_ratio * sin_theta > 1. || rng.gen::<f32>() < reflectance {
+            reflect(direction, hit.normal)
+        } else {
+            refract(direction, hit.normal, refraction_ratio)
+        };
+
+        Some((Vec3::ONE, Ray::new(hit.position, direction)))
     }
 }
 
@@ -299,7 +337,7 @@ fn main() {
     const ASPECT_RATIO: f32 = 16. / 9.;
     const IMAGE_WIDTH: usize = 3840;
     const IMAGE_HEIGHT: usize = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as usize;
-    const SAMPLES_PER_PIXEL: u32 = 256;
+    const SAMPLES_PER_PIXEL: u32 = 64;
     const MAX_DEPTH: u32 = 8;
 
     // World
@@ -312,12 +350,12 @@ fn main() {
         // Center
         Object {
             surface: Box::new(Sphere::new(Vec3::new(0., 0., -1.), 0.5)),
-            material: Box::new(Lambertian::new(Vec3::new(0.7, 0.3, 0.3))),
+            material: Box::new(Lambertian::new(Vec3::new(0.1, 0.2, 0.5))),
         },
         // Left
         Object {
             surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), 0.5)),
-            material: Box::new(Metal::new(Vec3::new(0.8, 0.8, 0.8), 0.3)),
+            material: Box::new(Dielectric::new(1.5)),
         },
         // Right
         Object {
