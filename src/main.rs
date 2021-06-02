@@ -191,9 +191,9 @@ impl Dielectric {
         Self { refraction }
     }
 
-    fn reflectance(&self, cos_theta: f32) -> f32 {
+    fn reflectance(cos_theta: f32, refraction_ratio: f32) -> f32 {
         // Schlick's approximation
-        let r0 = ((1. - self.refraction) / (1. + self.refraction)).powi(2);
+        let r0 = ((1. - refraction_ratio) / (1. + refraction_ratio)).powi(2);
         r0 * (1. - r0) * (1. - cos_theta).powi(5)
     }
 }
@@ -209,7 +209,7 @@ impl Scatter for Dielectric {
         let direction = r.direction().normalize();
         let cos_theta = (-direction).dot(hit.normal);
         let sin_theta = (1. - cos_theta.powi(2)).sqrt();
-        let reflectance = self.reflectance(cos_theta);
+        let reflectance = Self::reflectance(cos_theta, refraction_ratio);
 
         let direction = if refraction_ratio * sin_theta > 1. || rng.gen::<f32>() < reflectance {
             reflect(direction, hit.normal)
@@ -365,18 +365,18 @@ fn main() {
             material: Box::new(Dielectric::new(1.5)),
         },
         Object {
-            surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), -0.4)),
+            surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), -0.45)),
             material: Box::new(Dielectric::new(1.5)),
         },
         // Right
         Object {
             surface: Box::new(Sphere::new(Vec3::new(1., 0., -1.), 0.5)),
-            material: Box::new(Metal::new(Vec3::new(0.8, 0.6, 0.2), 1.)),
+            material: Box::new(Metal::new(Vec3::new(0.8, 0.6, 0.2), 0.)),
         },
     ]);
 
     // Camera
-    let camera = Camera::new(Vec3::new(-2., 2., 1.), -Vec3::Z, Vec3::Y, 90., ASPECT_RATIO);
+    let camera = Camera::new(Vec3::new(-2., 2., 1.), -Vec3::Z, Vec3::Y, 20., ASPECT_RATIO);
 
     // Render using all cpu cores
     let nthreads = num_cpus::get();
