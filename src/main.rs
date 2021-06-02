@@ -64,11 +64,24 @@ impl Ray {
     }
 }
 
+fn random_in_disc(rng: &mut XorShiftRng) -> Vec2 {
+    loop {
+        let v = Vec2::from(rng.gen::<[f32; 2]>()) * 2. - Vec2::ONE;
+        let len = v.length();
+        if len < 1. {
+            return v;
+        }
+    }
+}
+
 struct Camera {
     origin: Vec3,
     lower_left_corner: Vec3,
     horizontal: Vec3,
     vertical: Vec3,
+    cu: Vec3,
+    cv: Vec3,
+    lens_radius: f32,
 }
 
 impl Camera {
@@ -78,6 +91,8 @@ impl Camera {
         up: Vec3,
         vertical_fov_degrees: f32,
         aspect_ratio: f32,
+        aperture: f32,
+        focus_distance: f32,
     ) -> Self {
         // Calculate viewport dimensions
         let theta = std::f32::consts::PI / 180.0 * vertical_fov_degrees;
@@ -89,27 +104,34 @@ impl Camera {
         let cu = up.cross(cw).normalize();
         let cv = cw.cross(cu);
 
-        let horizontal = viewport_width * cu;
-        let vertical = viewport_height * cv;
+        let horizontal = focus_distance * viewport_width * cu;
+        let vertical = focus_distance * viewport_height * cv;
 
         // Projection plane's surface's low left corner point
         let lower_left_corner = origin
         - horizontal / 2. // Half viewport in x direction
         - vertical / 2. // Half viewport in y direction
-        - cw; // Forward to viewport surface
+        - focus_distance * cw; // Forward to viewport surface
 
         Self {
             origin,
             lower_left_corner,
             horizontal,
             vertical,
+            cu,
+            cv,
+            lens_radius: aperture / 2.,
         }
     }
 
-    pub fn get_ray(&self, uv: Vec2) -> Ray {
+    pub fn get_ray(&self, rng: &mut XorShiftRng, uv: Vec2) -> Ray {
+        let rd = self.lens_radius * random_in_disc(rng);
+        let offset = self.cu * rd.x + self.cv * rd.y;
         Ray::new(
-            self.origin,
-            self.lower_left_corner + uv.x * self.horizontal + uv.y * self.vertical - self.origin,
+            self.origin + offset,
+            self.lower_left_corner + uv.x * self.horizontal + uv.y * self.vertical
+                - self.origin
+                - offset,
         )
     }
 }
@@ -376,7 +398,17 @@ fn main() {
     ]);
 
     // Camera
-    let camera = Camera::new(Vec3::new(-2., 2., 1.), -Vec3::Z, Vec3::Y, 20., ASPECT_RATIO);
+    let lookfrom = Vec3::new(3., 3., 2.);
+    let lookat = -Vec3::Z;
+    let camera = Camera::new(
+        lookfrom,
+        lookat,
+        Vec3::Y,
+        20.,
+        ASPECT_RATIO,
+        0.1,
+        lookfrom.distance(lookat),
+    );
 
     // Render using all cpu cores
     let nthreads = num_cpus::get();
@@ -416,7 +448,12 @@ fn main() {
                             let random = Vec2::from(rng.gen::<[f32; 2]>());
                             let wh = Vec2::new(IMAGE_WIDTH as f32, IMAGE_HEIGHT as f32);
                             let uv = (xy + random) / (wh - Vec2::ONE);
-                            color += ray_color(camera.get_ray(uv), &world, &mut rng, MAX_DEPTH);
+                            color += ray_color(
+                                camera.get_ray(&mut rng, uv),
+                                &world,
+                                &mut rng,
+                                MAX_DEPTH,
+                            );
                         }
 
                         // Average samples, clamp and output to 8bpp RGB buffer
