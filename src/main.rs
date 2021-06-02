@@ -72,10 +72,11 @@ struct Camera {
 }
 
 impl Camera {
-    pub fn new(aspect_ratio: f32) -> Self {
-        let viewport_height = 2.;
-        let viewport_width = aspect_ratio * viewport_height;
+    pub fn new(vertical_fov_degrees: f32, aspect_ratio: f32) -> Self {
         let focal_length = 1.;
+        let theta = std::f32::consts::PI / 180.0 * vertical_fov_degrees;
+        let viewport_height = 2. * (theta / 2.).tan();
+        let viewport_width = aspect_ratio * viewport_height;
 
         let origin = Vec3::ZERO;
         let horizontal = Vec3::new(viewport_width, 0., 0.);
@@ -365,7 +366,7 @@ fn main() {
     ]);
 
     // Camera
-    let camera = Camera::new(ASPECT_RATIO);
+    let camera = Camera::new(90., ASPECT_RATIO);
 
     // Render using all cpu cores
     let nthreads = num_cpus::get();
