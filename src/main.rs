@@ -72,25 +72,31 @@ struct Camera {
 }
 
 impl Camera {
-    pub fn new(vertical_fov_degrees: f32, aspect_ratio: f32) -> Self {
-        let focal_length = 1.;
+    pub fn new(
+        origin: Vec3,
+        look_at: Vec3,
+        up: Vec3,
+        vertical_fov_degrees: f32,
+        aspect_ratio: f32,
+    ) -> Self {
+        // Calculate viewport dimensions
         let theta = std::f32::consts::PI / 180.0 * vertical_fov_degrees;
         let viewport_height = 2. * (theta / 2.).tan();
         let viewport_width = aspect_ratio * viewport_height;
 
-        let origin = Vec3::ZERO;
-        let horizontal = Vec3::new(viewport_width, 0., 0.);
-        let vertical = Vec3::new(0., viewport_height, 0.);
+        // Establish a basis for the viewport
+        let cw = (origin - look_at).normalize();
+        let cu = up.cross(cw).normalize();
+        let cv = cw.cross(cu);
+
+        let horizontal = viewport_width * cu;
+        let vertical = viewport_height * cv;
+
         // Projection plane's surface's low left corner point
         let lower_left_corner = origin
         - horizontal / 2. // Half viewport in x direction
         - vertical / 2. // Half viewport in y direction
-        - Vec3::new(
-            0.,
-            0.,
-            focal_length, /* To viewport in z direction. Because of the right handed coordinates */
-                          /* this actually makes the vector point forward (towards negative z) */
-        );
+        - cw; // Forward to viewport surface
 
         Self {
             origin,
@@ -318,7 +324,7 @@ fn ray_color(r: Ray, world: &World, rng: &mut XorShiftRng, depth: u32) -> Vec3 {
         return Vec3::ZERO;
     }
 
-    if let Some((hit, material)) = world.traverse(&r, 0.001) {
+    if let Some((hit, material)) = world.traverse(&r, 0.0001) {
         if let Some((att, r)) = material.scatter(rng, &r, &hit) {
             att * ray_color(r, world, rng, depth - 1)
         } else {
@@ -339,7 +345,7 @@ fn main() {
     const IMAGE_WIDTH: usize = 3840;
     const IMAGE_HEIGHT: usize = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as usize;
     const SAMPLES_PER_PIXEL: u32 = 64;
-    const MAX_DEPTH: u32 = 8;
+    const MAX_DEPTH: u32 = 32;
 
     // World
     let world = World::new(vec![
@@ -358,6 +364,10 @@ fn main() {
             surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), 0.5)),
             material: Box::new(Dielectric::new(1.5)),
         },
+        Object {
+            surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), -0.4)),
+            material: Box::new(Dielectric::new(1.5)),
+        },
         // Right
         Object {
             surface: Box::new(Sphere::new(Vec3::new(1., 0., -1.), 0.5)),
@@ -366,7 +376,7 @@ fn main() {
     ]);
 
     // Camera
-    let camera = Camera::new(90., ASPECT_RATIO);
+    let camera = Camera::new(Vec3::new(-2., 2., 1.), -Vec3::Z, Vec3::Y, 90., ASPECT_RATIO);
 
     // Render using all cpu cores
     let nthreads = num_cpus::get();
