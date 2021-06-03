@@ -3,6 +3,7 @@ mod color;
 mod ray;
 mod world;
 
+use anyhow::{anyhow, Context, Result};
 use camera::Camera;
 use color::{Color, OutputColor, COLOR_CHANNELS};
 use glam::{Vec2, Vec3};
@@ -12,7 +13,6 @@ use rand_xorshift::XorShiftRng;
 use ray::Ray;
 use std::{
     convert::TryFrom,
-    error::Error,
     ffi::OsString,
     fs::File,
     io::{prelude::*, BufWriter},
@@ -40,7 +40,7 @@ fn ray_color(r: Ray, world: &World, rng: &mut XorShiftRng, depth: u32) -> Vec3 {
     }
 }
 
-fn main() {
+fn main() -> Result<()> {
     let mut args = pico_args::Arguments::from_env();
 
     // Image
@@ -53,8 +53,7 @@ fn main() {
                 (Some(s), None) => s.parse(),
                 _ => unreachable!(),
             }
-        })
-        .unwrap()
+        })?
         .unwrap_or(16. / 9.);
     let image_height: usize = args
         .opt_value_from_fn(["-h", "--height"], |s| match s {
@@ -63,14 +62,10 @@ fn main() {
             "4K" | "2160p" => Ok(2160),
             "8K" | "4320p" => Ok(4320),
             _ => s.parse(),
-        })
-        .unwrap()
+        })?
         .unwrap_or(720);
     let image_width: usize = (image_height as f32 * aspect_ratio) as usize;
-    let samples_per_pixel: u32 = args
-        .opt_value_from_str(["-s", "--samples"])
-        .unwrap()
-        .unwrap_or(64);
+    let samples_per_pixel: u32 = args.opt_value_from_str(["-s", "--samples"])?.unwrap_or(64);
     let mut remaining = args.finish();
     let output_file_path = remaining.pop().unwrap_or_else(|| {
         OsString::from(format!(
@@ -78,9 +73,12 @@ fn main() {
             humantime::format_rfc3339(SystemTime::now())
         ))
     });
-    (!remaining.is_empty()).then(|| panic!("Unknown arguments: {:?}", remaining));
+    if !remaining.is_empty() {
+        return Err(anyhow!("Unknown arguments {:?}", remaining));
+    }
     // Ensure output file is writable before starting a long render
-    let output_file_writer = BufWriter::new(File::create(output_file_path).unwrap());
+    let output_file_writer =
+        BufWriter::new(File::create(output_file_path).context("Cannot create output file")?);
 
     // World
     let world = World::random(&mut XorShiftRng::seed_from_u64(42));
@@ -149,19 +147,16 @@ fn main() {
             });
         }
     })
-    .unwrap();
+    .map_err(|_| anyhow!("A rendering thread encountered an irrecoverable error"))?;
 
     // Encode PNG from results
-    write_png(output_file_writer, image_width, image_height, &pixel_data).unwrap();
+    write_png(output_file_writer, image_width, image_height, &pixel_data)
+        .context("Failed to write output PNG file")?;
     eprintln!("Done.                  ");
+    Ok(())
 }
 
-fn write_png(
-    write: impl Write,
-    width: usize,
-    height: usize,
-    rgb8_data: &[u8],
-) -> Result<(), Box<dyn Error>> {
+fn write_png(write: impl Write, width: usize, height: usize, rgb8_data: &[u8]) -> Result<()> {
     let mut encoder = png::Encoder::new(write, u32::try_from(width)?, u32::try_from(height)?);
     encoder.set_color(png::ColorType::RGB);
     encoder.set_depth(png::BitDepth::Eight);

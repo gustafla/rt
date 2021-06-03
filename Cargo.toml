@@ -5,6 +5,7 @@ authors = ["Lauri Gustafsson <me@gustafla.space>"]
 edition = "2018"
 
 [dependencies]
+anyhow = "1.0.40"
 crossbeam-utils = "0.8.4"
 glam = "0.15.2"
 humantime = "2.1.0"
