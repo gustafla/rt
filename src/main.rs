@@ -10,21 +10,22 @@ use parking_lot::Mutex;
 use rand::prelude::*;
 use rand_xorshift::XorShiftRng;
 use ray::Ray;
-use std::convert::TryFrom;
-use std::error::Error;
-use std::path::Path;
-use world::{
-    material::{Dielectric, Lambertian, Metal},
-    surface::Sphere,
-    Object, World,
+use std::{
+    convert::TryFrom,
+    error::Error,
+    ffi::OsString,
+    fs::File,
+    io::{prelude::*, BufWriter},
+    time::SystemTime,
 };
+use world::World;
 
 fn ray_color(r: Ray, world: &World, rng: &mut XorShiftRng, depth: u32) -> Vec3 {
     if depth == 0 {
         return Vec3::ZERO;
     }
 
-    if let Some((hit, material)) = world.traverse(&r, 0.0001) {
+    if let Some((hit, material)) = world.traverse(&r, 0.001) {
         if let Some((att, r)) = material.scatter(rng, &r, &hit) {
             att * ray_color(r, world, rng, depth - 1)
         } else {
@@ -40,58 +41,59 @@ fn ray_color(r: Ray, world: &World, rng: &mut XorShiftRng, depth: u32) -> Vec3 {
 }
 
 fn main() {
+    let mut args = pico_args::Arguments::from_env();
+
     // Image
-    const ASPECT_RATIO: f32 = 16. / 9.;
-    const IMAGE_WIDTH: usize = 3840;
-    const IMAGE_HEIGHT: usize = (IMAGE_WIDTH as f32 / ASPECT_RATIO) as usize;
-    const SAMPLES_PER_PIXEL: u32 = 64;
-    const MAX_DEPTH: u32 = 32;
+    const MAX_DEPTH: u32 = 64;
+    let aspect_ratio: f32 = args
+        .opt_value_from_fn(["-a", "--aspect-ratio"], |s| {
+            let mut split = s.splitn(2, ':');
+            match (split.next(), split.next()) {
+                (Some(s1), Some(s2)) => Ok(s1.parse::<f32>()? / s2.parse::<f32>()?),
+                (Some(s), None) => s.parse(),
+                _ => unreachable!(),
+            }
+        })
+        .unwrap()
+        .unwrap_or(16. / 9.);
+    let image_height: usize = args
+        .opt_value_from_fn(["-h", "--height"], |s| match s {
+            "HD" | "720p" => Ok(720),
+            "FHD" | "1080p" => Ok(1080),
+            "4K" | "2160p" => Ok(2160),
+            "8K" | "4320p" => Ok(4320),
+            _ => s.parse(),
+        })
+        .unwrap()
+        .unwrap_or(720);
+    let image_width: usize = (image_height as f32 * aspect_ratio) as usize;
+    let samples_per_pixel: u32 = args
+        .opt_value_from_str(["-s", "--samples"])
+        .unwrap()
+        .unwrap_or(64);
+    let mut remaining = args.finish();
+    let output_file_path = remaining.pop().unwrap_or_else(|| {
+        OsString::from(format!(
+            "{}.png",
+            humantime::format_rfc3339(SystemTime::now())
+        ))
+    });
+    (!remaining.is_empty()).then(|| panic!("Unknown arguments: {:?}", remaining));
+    // Ensure output file is writable before starting a long render
+    let output_file_writer = BufWriter::new(File::create(output_file_path).unwrap());
 
     // World
-    let world = World::new(vec![
-        // Ground
-        Object {
-            surface: Box::new(Sphere::new(Vec3::new(0., -100.5, -1.), 100.)),
-            material: Box::new(Lambertian::new(Vec3::new(0.8, 0.8, 0.0))),
-        },
-        // Center
-        Object {
-            surface: Box::new(Sphere::new(Vec3::new(0., 0., -1.), 0.5)),
-            material: Box::new(Lambertian::new(Vec3::new(0.1, 0.2, 0.5))),
-        },
-        // Left
-        Object {
-            surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), 0.5)),
-            material: Box::new(Dielectric::new(1.5)),
-        },
-        Object {
-            surface: Box::new(Sphere::new(Vec3::new(-1., 0., -1.), -0.45)),
-            material: Box::new(Dielectric::new(1.5)),
-        },
-        // Right
-        Object {
-            surface: Box::new(Sphere::new(Vec3::new(1., 0., -1.), 0.5)),
-            material: Box::new(Metal::new(Vec3::new(0.8, 0.6, 0.2), 0.)),
-        },
-    ]);
+    let world = World::random(&mut XorShiftRng::seed_from_u64(42));
 
     // Camera
-    let lookfrom = Vec3::new(3., 3., 2.);
-    let lookat = -Vec3::Z;
-    let camera = Camera::new(
-        lookfrom,
-        lookat,
-        Vec3::Y,
-        20.,
-        ASPECT_RATIO,
-        0.1,
-        lookfrom.distance(lookat),
-    );
+    let lookfrom = Vec3::new(13., 2., 3.);
+    let lookat = Vec3::ZERO;
+    let camera = Camera::new(lookfrom, lookat, Vec3::Y, 20., aspect_ratio, 0.1, 10.);
 
     // Render using all cpu cores
     let nthreads = num_cpus::get();
     // Allocate image buffer
-    let mut pixel_data = vec![0u8; IMAGE_WIDTH * IMAGE_HEIGHT * COLOR_CHANNELS];
+    let mut pixel_data = vec![0u8; image_width * image_height * COLOR_CHANNELS];
     // Divide buffer into chunks for threads to work on
     const CHUNK_PIXELS: usize = 4096;
     let chunks: Mutex<Vec<_>> = Mutex::new(
@@ -107,24 +109,28 @@ fn main() {
                 let mut rng = XorShiftRng::seed_from_u64(123);
 
                 while let Some((i, chunk)) = {
-                    let tmp = chunks.lock().pop();
-                    tmp // Drop mutex guard
+                    let (chunk, len) = {
+                        let mut chunks = chunks.lock();
+                        (chunks.pop(), chunks.len())
+                    };
+                    eprint!("Chunks left {:>5}\r", len);
+                    chunk
                 } {
                     let chunk_offset = CHUNK_PIXELS * i;
                     for i in 0..chunk.len() / COLOR_CHANNELS {
                         // Calculate pixel coordinates
                         let pixel = chunk_offset + i;
                         let xy = Vec2::new(
-                            (pixel % IMAGE_WIDTH) as f32,
-                            (IMAGE_HEIGHT - 1 - (pixel / IMAGE_WIDTH)) as f32,
+                            (pixel % image_width) as f32,
+                            (image_height - 1 - (pixel / image_width)) as f32,
                         );
 
                         // Accumulate color from rays
                         let mut color = Vec3::ZERO;
-                        for _ in 0..SAMPLES_PER_PIXEL {
+                        for _ in 0..samples_per_pixel {
                             // Ray through viewport in right handed space
                             let random = Vec2::from(rng.gen::<[f32; 2]>());
-                            let wh = Vec2::new(IMAGE_WIDTH as f32, IMAGE_HEIGHT as f32);
+                            let wh = Vec2::new(image_width as f32, image_height as f32);
                             let uv = (xy + random) / (wh - Vec2::ONE);
                             color += ray_color(
                                 camera.get_ray(&mut rng, uv),
@@ -136,7 +142,7 @@ fn main() {
 
                         // Average samples, clamp and output to 8bpp RGB buffer
                         chunk[i * COLOR_CHANNELS..][..COLOR_CHANNELS].copy_from_slice(
-                            &OutputColor::from(Color::from(color / SAMPLES_PER_PIXEL as f32)),
+                            &OutputColor::from(Color::from(color / samples_per_pixel as f32)),
                         );
                     }
                 }
@@ -146,26 +152,17 @@ fn main() {
     .unwrap();
 
     // Encode PNG from results
-    let output_file_path = std::env::args_os()
-        .nth(1)
-        .unwrap_or_else(|| std::ffi::OsString::from("image.png"));
-    write_png(&output_file_path, IMAGE_WIDTH, IMAGE_HEIGHT, &pixel_data).unwrap();
-    eprintln!("\nDone.");
-    std::process::Command::new("imv")
-        .args(&[output_file_path])
-        .spawn()
-        .ok();
+    write_png(output_file_writer, image_width, image_height, &pixel_data).unwrap();
+    eprintln!("Done.                  ");
 }
 
 fn write_png(
-    path: impl AsRef<Path>,
+    write: impl Write,
     width: usize,
     height: usize,
     rgb8_data: &[u8],
 ) -> Result<(), Box<dyn Error>> {
-    let file = std::fs::File::create(&path)?;
-    let w = std::io::BufWriter::new(file);
-    let mut encoder = png::Encoder::new(w, u32::try_from(width)?, u32::try_from(height)?);
+    let mut encoder = png::Encoder::new(write, u32::try_from(width)?, u32::try_from(height)?);
     encoder.set_color(png::ColorType::RGB);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header()?;
