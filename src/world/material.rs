@@ -84,7 +84,7 @@ impl Dielectric {
     fn reflectance(cos_theta: f32, refraction_ratio: f32) -> f32 {
         // Schlick's approximation
         let r0 = ((1. - refraction_ratio) / (1. + refraction_ratio)).powi(2);
-        r0 * (1. - r0) * (1. - cos_theta).powi(5)
+        r0 + (1. - r0) * (1. - cos_theta).powi(5)
     }
 }
 
