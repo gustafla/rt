@@ -80,8 +80,12 @@ fn main() -> Result<()> {
     let output_file_writer =
         BufWriter::new(File::create(output_file_path).context("Cannot create output file")?);
 
-    // World
-    let world = World::random(&mut XorShiftRng::seed_from_u64(42));
+    // World (different each time)
+    let world = World::random(&mut XorShiftRng::seed_from_u64(
+        SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs(),
+    ));
 
     // Camera
     let lookfrom = Vec3::new(13., 2., 3.);
