@@ -1,9 +1,8 @@
 use crate::Ray;
 use glam::{Vec2, Vec3};
 use rand::prelude::*;
-use rand_xorshift::XorShiftRng;
 
-fn random_in_disc(rng: &mut XorShiftRng) -> Vec2 {
+fn random_in_disc(rng: &mut impl Rng) -> Vec2 {
     loop {
         let v = Vec2::from(rng.gen::<[f32; 2]>()) * 2. - Vec2::ONE;
         let len = v.length();
@@ -63,7 +62,7 @@ impl Camera {
         }
     }
 
-    pub fn get_ray(&self, rng: &mut XorShiftRng, uv: Vec2) -> Ray {
+    pub fn get_ray(&self, rng: &mut impl Rng, uv: Vec2) -> Ray {
         let rd = self.lens_radius * random_in_disc(rng);
         let offset = self.cu * rd.x + self.cv * rd.y;
         Ray::new(

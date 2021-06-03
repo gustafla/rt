@@ -20,7 +20,7 @@ use std::{
 };
 use world::World;
 
-fn ray_color(r: Ray, world: &World, rng: &mut XorShiftRng, depth: u32) -> Vec3 {
+fn ray_color<R: Rng>(r: Ray, world: &World<R>, rng: &mut R, depth: u32) -> Vec3 {
     if depth == 0 {
         return Vec3::ZERO;
     }

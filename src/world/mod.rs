@@ -3,21 +3,21 @@ pub mod surface;
 
 use crate::Ray;
 use glam::Vec3;
-use material::{Dielectric, Lambertian, Material, Metal};
+use material::{Dielectric, Lambertian, Metal, Scatter};
 use rand::prelude::*;
-use surface::{HitRecord, Sphere, Surface};
+use surface::{Hit, HitRecord, Sphere};
 
-pub struct Object {
-    pub surface: Surface,
-    pub material: Material,
+pub struct Object<R: Rng> {
+    pub surface: Box<dyn Hit>,
+    pub material: Box<dyn Scatter<R>>,
 }
 
-pub struct World {
-    objects: Vec<Object>,
+pub struct World<R: Rng> {
+    objects: Vec<Object<R>>,
 }
 
-impl World {
-    pub fn new(objects: Vec<Object>) -> Self {
+impl<R: Rng> World<R> {
+    pub fn new(objects: Vec<Object<R>>) -> Self {
         Self { objects }
     }
 
@@ -41,7 +41,7 @@ impl World {
                         // Diffuse
                         let albedo =
                             Vec3::from(rng.gen::<[f32; 3]>()) * Vec3::from(rng.gen::<[f32; 3]>());
-                        Box::new(Lambertian::new(albedo)) as Material
+                        Box::new(Lambertian::new(albedo)) as Box<dyn Scatter<R>>
                     }
                     80..=94 => {
                         // Metal
@@ -77,14 +77,14 @@ impl World {
         Self::new(objects)
     }
 
-    pub fn traverse(&self, r: &Ray, t_min: f32) -> Option<(HitRecord, &Material)> {
+    pub fn traverse(&self, r: &Ray, t_min: f32) -> Option<(HitRecord, &dyn Scatter<R>)> {
         let mut nearest_hit = None;
         let mut nearest_t = f32::INFINITY;
 
         for Object { surface, material } in self.objects.iter() {
             if let Some(hit) = surface.hit(r, t_min..nearest_t) {
                 nearest_t = hit.t;
-                nearest_hit = Some((hit, material));
+                nearest_hit = Some((hit, material.as_ref()));
             }
         }
 

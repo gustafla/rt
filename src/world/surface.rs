@@ -25,7 +25,7 @@ impl HitRecord {
     }
 }
 
-pub trait Hit {
+pub trait Hit: Send + Sync {
     fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord>;
 }
 
@@ -67,5 +67,3 @@ impl Hit for Sphere {
         Some(HitRecord::new(position, outward_normal, root, r))
     }
 }
-
-pub type Surface = Box<dyn Hit + Send + Sync>;

@@ -2,13 +2,12 @@ use super::HitRecord;
 use crate::Ray;
 use glam::Vec3;
 use rand::prelude::*;
-use rand_xorshift::XorShiftRng;
 
-pub trait Scatter {
-    fn scatter(&self, rng: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)>;
+pub trait Scatter<R: Rng>: Send + Sync {
+    fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)>;
 }
 
-fn random_in_sphere(rng: &mut XorShiftRng) -> Vec3 {
+fn random_in_sphere(rng: &mut impl Rng) -> Vec3 {
     loop {
         let v = Vec3::from(rng.gen::<[f32; 3]>()) * 2. - Vec3::ONE;
         let len = v.length();
@@ -28,8 +27,8 @@ impl Lambertian {
     }
 }
 
-impl Scatter for Lambertian {
-    fn scatter(&self, rng: &mut XorShiftRng, _: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+impl<R: Rng> Scatter<R> for Lambertian {
+    fn scatter(&self, rng: &mut R, _: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
         let mut direction = hit.normal + random_in_sphere(rng).normalize();
         if direction.length_squared() < 0.001 {
             direction = hit.normal;
@@ -53,8 +52,8 @@ impl Metal {
     }
 }
 
-impl Scatter for Metal {
-    fn scatter(&self, rng: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+impl<R: Rng> Scatter<R> for Metal {
+    fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
         let reflected = reflect(r.direction(), hit.normal).normalize();
         let scattered = reflected + self.fuzz * random_in_sphere(rng);
         if scattered.dot(hit.normal) > 0. {
@@ -72,6 +71,12 @@ fn refract(v: Vec3, normal: Vec3, refraction_ratio: f32) -> Vec3 {
     perpendicular + parallel
 }
 
+fn reflectance(cos_theta: f32, refraction_ratio: f32) -> f32 {
+    // Schlick's approximation
+    let r0 = ((1. - refraction_ratio) / (1. + refraction_ratio)).powi(2);
+    r0 + (1. - r0) * (1. - cos_theta).powi(5)
+}
+
 pub struct Dielectric {
     refraction: f32,
 }
@@ -80,16 +85,10 @@ impl Dielectric {
     pub fn new(refraction: f32) -> Self {
         Self { refraction }
     }
-
-    fn reflectance(cos_theta: f32, refraction_ratio: f32) -> f32 {
-        // Schlick's approximation
-        let r0 = ((1. - refraction_ratio) / (1. + refraction_ratio)).powi(2);
-        r0 + (1. - r0) * (1. - cos_theta).powi(5)
-    }
 }
 
-impl Scatter for Dielectric {
-    fn scatter(&self, rng: &mut XorShiftRng, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+impl<R: Rng> Scatter<R> for Dielectric {
+    fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
         let refraction_ratio = if hit.front_facing {
             1. / self.refraction
         } else {
@@ -99,7 +98,7 @@ impl Scatter for Dielectric {
         let direction = r.direction().normalize();
         let cos_theta = (-direction).dot(hit.normal);
         let sin_theta = (1. - cos_theta.powi(2)).sqrt();
-        let reflectance = Self::reflectance(cos_theta, refraction_ratio);
+        let reflectance = reflectance(cos_theta, refraction_ratio);
 
         let direction = if refraction_ratio * sin_theta > 1. || rng.gen::<f32>() < reflectance {
             reflect(direction, hit.normal)
@@ -110,5 +109,3 @@ impl Scatter for Dielectric {
         Some((Vec3::ONE, Ray::new(hit.position, direction)))
     }
 }
-
-pub type Material = Box<dyn Scatter + Send + Sync>;
