@@ -1,11 +1,11 @@
 use crate::Ray;
-use glam::{Vec2, Vec3};
 use rand::prelude::*;
+use ultraviolet::{Vec2, Vec3};
 
 fn random_in_disc(rng: &mut impl Rng) -> Vec2 {
     loop {
-        let v = Vec2::from(rng.gen::<[f32; 2]>()) * 2. - Vec2::ONE;
-        let len = v.length();
+        let v = Vec2::from(rng.gen::<[f32; 2]>()) * 2. - Vec2::one();
+        let len = v.mag_sq();
         if len < 1. {
             return v;
         }
@@ -38,8 +38,8 @@ impl Camera {
         let viewport_width = aspect_ratio * viewport_height;
 
         // Establish a basis for the viewport
-        let cw = (origin - look_at).normalize();
-        let cu = up.cross(cw).normalize();
+        let cw = (origin - look_at).normalized();
+        let cu = up.cross(cw).normalized();
         let cv = cw.cross(cu);
 
         let horizontal = focus_distance * viewport_width * cu;

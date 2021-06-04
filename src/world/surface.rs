@@ -1,6 +1,6 @@
 use crate::Ray;
-use glam::Vec3;
 use std::ops::Range;
+use ultraviolet::Vec3;
 
 pub struct HitRecord {
     pub position: Vec3,
@@ -43,9 +43,9 @@ impl Sphere {
 impl Hit for Sphere {
     fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
         let oc = r.origin() - self.center;
-        let a = r.direction().length().powi(2);
+        let a = r.direction().mag().powi(2);
         let half_b = oc.dot(r.direction());
-        let c = oc.length().powi(2) - self.radius.powi(2);
+        let c = oc.mag().powi(2) - self.radius.powi(2);
 
         let discriminant = half_b.powi(2) - a * c;
         if discriminant < 0. {

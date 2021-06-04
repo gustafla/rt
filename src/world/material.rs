@@ -1,7 +1,7 @@
 use super::HitRecord;
 use crate::Ray;
-use glam::Vec3;
 use rand::prelude::*;
+use ultraviolet::Vec3;
 
 pub trait Scatter<R: Rng>: Send + Sync {
     fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)>;
@@ -9,8 +9,8 @@ pub trait Scatter<R: Rng>: Send + Sync {
 
 fn random_in_sphere(rng: &mut impl Rng) -> Vec3 {
     loop {
-        let v = Vec3::from(rng.gen::<[f32; 3]>()) * 2. - Vec3::ONE;
-        let len = v.length();
+        let v = Vec3::from(rng.gen::<[f32; 3]>()) * 2. - Vec3::one();
+        let len = v.mag_sq();
         if len < 1. && len > 0.0001 {
             return v;
         }
@@ -29,8 +29,8 @@ impl Lambertian {
 
 impl<R: Rng> Scatter<R> for Lambertian {
     fn scatter(&self, rng: &mut R, _: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
-        let mut direction = hit.normal + random_in_sphere(rng).normalize();
-        if direction.length_squared() < 0.001 {
+        let mut direction = hit.normal + random_in_sphere(rng).normalized();
+        if direction.mag_sq() < 0.001 {
             direction = hit.normal;
         }
         Some((self.albedo, Ray::new(hit.position, direction)))
@@ -54,7 +54,7 @@ impl Metal {
 
 impl<R: Rng> Scatter<R> for Metal {
     fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
-        let reflected = reflect(r.direction(), hit.normal).normalize();
+        let reflected = reflect(r.direction(), hit.normal).normalized();
         let scattered = reflected + self.fuzz * random_in_sphere(rng);
         if scattered.dot(hit.normal) > 0. {
             Some((self.albedo, Ray::new(hit.position, scattered)))
@@ -67,7 +67,7 @@ impl<R: Rng> Scatter<R> for Metal {
 fn refract(v: Vec3, normal: Vec3, refraction_ratio: f32) -> Vec3 {
     let cos_theta = (-v).dot(normal);
     let perpendicular = refraction_ratio * (v + cos_theta * normal);
-    let parallel = -(1. - perpendicular.length_squared()).abs().sqrt() * normal;
+    let parallel = -(1. - perpendicular.mag_sq()).abs().sqrt() * normal;
     perpendicular + parallel
 }
 
@@ -95,7 +95,7 @@ impl<R: Rng> Scatter<R> for Dielectric {
             self.refraction
         };
 
-        let direction = r.direction().normalize();
+        let direction = r.direction().normalized();
         let cos_theta = (-direction).dot(hit.normal);
         let sin_theta = (1. - cos_theta.powi(2)).sqrt();
         let reflectance = reflectance(cos_theta, refraction_ratio);
@@ -106,6 +106,6 @@ impl<R: Rng> Scatter<R> for Dielectric {
             refract(direction, hit.normal, refraction_ratio)
         };
 
-        Some((Vec3::ONE, Ray::new(hit.position, direction)))
+        Some((Vec3::one(), Ray::new(hit.position, direction)))
     }
 }

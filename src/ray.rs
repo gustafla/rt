@@ -1,4 +1,4 @@
-use glam::Vec3;
+use ultraviolet::Vec3;
 
 pub struct Ray {
     origin: Vec3,

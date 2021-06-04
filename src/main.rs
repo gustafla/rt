@@ -6,7 +6,6 @@ mod world;
 use anyhow::{anyhow, Context, Result};
 use camera::Camera;
 use color::{Color, OutputColor, COLOR_CHANNELS};
-use glam::{Vec2, Vec3};
 use parking_lot::Mutex;
 use rand::prelude::*;
 use rand_xorshift::XorShiftRng;
@@ -18,25 +17,26 @@ use std::{
     io::{prelude::*, BufWriter},
     time::SystemTime,
 };
+use ultraviolet::{Lerp, Vec2, Vec3};
 use world::World;
 
 fn ray_color<R: Rng>(r: Ray, world: &World<R>, rng: &mut R, depth: u32) -> Vec3 {
     if depth == 0 {
-        return Vec3::ZERO;
+        return Vec3::zero();
     }
 
     if let Some((hit, material)) = world.traverse(&r, 0.001) {
         if let Some((att, r)) = material.scatter(rng, &r, &hit) {
             att * ray_color(r, world, rng, depth - 1)
         } else {
-            Vec3::ZERO
+            Vec3::zero()
         }
     } else {
-        let unit_direction = r.direction().normalize();
+        let unit_direction = r.direction().normalized();
         // From 0 to 1 when down to up
         let t = 0.5 * (unit_direction.y + 1.);
         // Blue to white gradient
-        Vec3::ONE.lerp(Vec3::new(0.5, 0.7, 1.), t)
+        Vec3::one().lerp(Vec3::new(0.5, 0.7, 1.), t)
     }
 }
 
@@ -89,8 +89,16 @@ fn main() -> Result<()> {
 
     // Camera
     let lookfrom = Vec3::new(13., 2., 3.);
-    let lookat = Vec3::ZERO;
-    let camera = Camera::new(lookfrom, lookat, Vec3::Y, 20., aspect_ratio, 0.1, 10.);
+    let lookat = Vec3::zero();
+    let camera = Camera::new(
+        lookfrom,
+        lookat,
+        Vec3::unit_y(),
+        20.,
+        aspect_ratio,
+        0.1,
+        10.,
+    );
 
     // Render using all cpu cores
     let nthreads = num_cpus::get();
@@ -128,12 +136,12 @@ fn main() -> Result<()> {
                         );
 
                         // Accumulate color from rays
-                        let mut color = Vec3::ZERO;
+                        let mut color = Vec3::zero();
                         for _ in 0..samples_per_pixel {
                             // Ray through viewport in right handed space
                             let random = Vec2::from(rng.gen::<[f32; 2]>());
                             let wh = Vec2::new(image_width as f32, image_height as f32);
-                            let uv = (xy + random) / (wh - Vec2::ONE);
+                            let uv = (xy + random) / (wh - Vec2::one());
                             color += ray_color(
                                 camera.get_ray(&mut rng, uv),
                                 &world,

@@ -1,4 +1,4 @@
-use glam::Vec3;
+use ultraviolet::Vec3;
 
 pub struct Color(Vec3);
 
@@ -20,7 +20,7 @@ impl Color {
     }
 
     fn clamp(self, min: f32, max: f32) -> Color {
-        Self(self.0.clamp(Vec3::splat(min), Vec3::splat(max)))
+        Self(self.0.clamped(Vec3::broadcast(min), Vec3::broadcast(max)))
     }
 }
 

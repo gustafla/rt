@@ -2,10 +2,10 @@ pub mod material;
 pub mod surface;
 
 use crate::Ray;
-use glam::Vec3;
 use material::{Dielectric, Lambertian, Metal, Scatter};
 use rand::prelude::*;
 use surface::{Hit, HitRecord, Sphere};
+use ultraviolet::{Lerp, Vec3};
 
 pub struct Object<R: Rng> {
     pub surface: Box<dyn Hit>,
@@ -24,7 +24,7 @@ impl<R: Rng> World<R> {
     pub fn random(rng: &mut impl Rng) -> Self {
         let mut objects = vec![Object {
             surface: Box::new(Sphere::new(Vec3::new(0., -1000., 0.), 1000.)),
-            material: Box::new(Lambertian::new(Vec3::ONE * 0.5)),
+            material: Box::new(Lambertian::new(Vec3::one() * 0.5)),
         }];
 
         for a in -11..=11 {
@@ -45,7 +45,7 @@ impl<R: Rng> World<R> {
                     }
                     80..=94 => {
                         // Metal
-                        let albedo = Vec3::from(rng.gen::<[f32; 3]>()).lerp(Vec3::ONE, 0.4);
+                        let albedo = Vec3::from(rng.gen::<[f32; 3]>()).lerp(Vec3::one(), 0.4);
                         let fuzz = rng.gen_range(0.0..0.4);
                         Box::new(Metal::new(albedo, fuzz))
                     }
