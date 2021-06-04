@@ -23,7 +23,7 @@ impl<R: Rng> World<R> {
 
     pub fn random(rng: &mut impl Rng) -> Self {
         let mut objects = vec![Object {
-            surface: Box::new(Sphere::new(Vec3::new(0., -1000., 0.), 1000.)),
+            surface: Box::new(Sphere::new(Vec3::new(0., -1000., 0.), None, 1000.)),
             material: Box::new(Lambertian::new(Vec3::one() * 0.5)),
         }];
 
@@ -34,42 +34,45 @@ impl<R: Rng> World<R> {
                     0.2,
                     b as f32 + rng.gen_range(0f32..0.9),
                 );
-                let surface = Box::new(Sphere::new(center, 0.2));
 
-                let material = match rng.gen_range(0..=100) {
-                    0..=79 => {
-                        // Diffuse
-                        let albedo =
-                            Vec3::from(rng.gen::<[f32; 3]>()) * Vec3::from(rng.gen::<[f32; 3]>());
-                        Box::new(Lambertian::new(albedo)) as Box<dyn Scatter<R>>
-                    }
-                    80..=94 => {
-                        // Metal
-                        let albedo = Vec3::from(rng.gen::<[f32; 3]>()).lerp(Vec3::one(), 0.4);
-                        let fuzz = rng.gen_range(0.0..0.4);
-                        Box::new(Metal::new(albedo, fuzz))
-                    }
-                    _ => {
-                        // Glass
-                        Box::new(Dielectric::new(1.5))
-                    }
+                let (direction, material) = match rng.gen_range(0..=100) {
+                    // Diffuse
+                    0..=79 => (
+                        Some(Vec3::unit_y() * rng.gen_range(0f32..0.5)),
+                        Box::new(Lambertian::new(
+                            Vec3::from(rng.gen::<[f32; 3]>()) * Vec3::from(rng.gen::<[f32; 3]>()),
+                        )) as Box<dyn Scatter<R>>,
+                    ),
+                    // Metal
+                    80..=94 => (
+                        None,
+                        Box::new(Metal::new(
+                            Vec3::from(rng.gen::<[f32; 3]>()).lerp(Vec3::one(), 0.4),
+                            rng.gen_range(0.0..0.2),
+                        )) as Box<dyn Scatter<R>>,
+                    ),
+                    // Glass
+                    _ => (None, Box::new(Dielectric::new(1.5)) as Box<dyn Scatter<R>>),
                 };
 
-                objects.push(Object { surface, material });
+                objects.push(Object {
+                    surface: Box::new(Sphere::new(center, direction, 0.2)),
+                    material,
+                });
             }
         }
 
         objects.extend(vec![
             Object {
-                surface: Box::new(Sphere::new(Vec3::new(0., 1., 0.), 1.)),
+                surface: Box::new(Sphere::new(Vec3::new(0., 1., 0.), None, 1.)),
                 material: Box::new(Dielectric::new(1.5)),
             },
             Object {
-                surface: Box::new(Sphere::new(Vec3::new(-4., 1., 0.), 1.)),
+                surface: Box::new(Sphere::new(Vec3::new(-4., 1., 0.), None, 1.)),
                 material: Box::new(Lambertian::new(Vec3::new(0.4, 0.2, 0.1))),
             },
             Object {
-                surface: Box::new(Sphere::new(Vec3::new(4., 1., 0.), 1.)),
+                surface: Box::new(Sphere::new(Vec3::new(4., 1., 0.), None, 1.)),
                 material: Box::new(Metal::new(Vec3::new(0.7, 0.6, 0.5), 0.)),
             },
         ]);

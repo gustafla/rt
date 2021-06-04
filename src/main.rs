@@ -97,6 +97,7 @@ fn main() -> Result<()> {
         aspect_ratio,
         0.1,
         10.,
+        0f32..1.,
     );
 
     // Render using all cpu cores

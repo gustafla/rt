@@ -25,9 +25,9 @@ impl Lambertian {
 }
 
 impl<R: Rng> Scatter<R> for Lambertian {
-    fn scatter(&self, rng: &mut R, _: Ray, hit: HitRecord) -> Option<(Vec3, Ray)> {
+    fn scatter(&self, rng: &mut R, r: Ray, hit: HitRecord) -> Option<(Vec3, Ray)> {
         let direction = hit.normal + random_on_sphere(rng);
-        Some((self.albedo, Ray::new(hit.position, direction)))
+        Some((self.albedo, Ray::new(hit.position, direction, r.time())))
     }
 }
 
@@ -46,7 +46,7 @@ impl<R: Rng> Scatter<R> for Metal {
     fn scatter(&self, rng: &mut R, r: Ray, hit: HitRecord) -> Option<(Vec3, Ray)> {
         let direction = r.direction().reflected(hit.normal) + self.fuzz * random_on_sphere(rng);
         if direction.dot(hit.normal) > 0. {
-            Some((self.albedo, Ray::new(hit.position, direction)))
+            Some((self.albedo, Ray::new(hit.position, direction, r.time())))
         } else {
             None
         }
@@ -87,6 +87,6 @@ impl<R: Rng> Scatter<R> for Dielectric {
             r.direction().refracted(hit.normal, refraction_ratio)
         };
 
-        Some((Vec3::one(), Ray::new(hit.position, direction)))
+        Some((Vec3::one(), Ray::new(hit.position, direction, r.time())))
     }
 }

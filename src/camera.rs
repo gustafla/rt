@@ -1,5 +1,6 @@
 use crate::Ray;
 use rand::prelude::*;
+use std::ops::Range;
 use ultraviolet::{Vec2, Vec3};
 
 fn random_in_disc(rng: &mut impl Rng) -> Vec2 {
@@ -17,9 +18,10 @@ pub struct Camera {
     lower_left_corner: Vec3,
     horizontal: Vec3,
     vertical: Vec3,
-    cu: Vec3,
-    cv: Vec3,
+    u: Vec3,
+    v: Vec3,
     lens_radius: f32,
+    shutter_time: Range<f32>,
 }
 
 impl Camera {
@@ -31,6 +33,7 @@ impl Camera {
         aspect_ratio: f32,
         aperture: f32,
         focus_distance: f32,
+        shutter_time: Range<f32>,
     ) -> Self {
         // Calculate viewport dimensions
         let theta = std::f32::consts::PI / 180.0 * vertical_fov_degrees;
@@ -38,38 +41,40 @@ impl Camera {
         let viewport_width = aspect_ratio * viewport_height;
 
         // Establish a basis for the viewport
-        let cw = (origin - look_at).normalized();
-        let cu = up.cross(cw).normalized();
-        let cv = cw.cross(cu);
+        let w = (origin - look_at).normalized();
+        let u = up.cross(w).normalized();
+        let v = w.cross(u);
 
-        let horizontal = focus_distance * viewport_width * cu;
-        let vertical = focus_distance * viewport_height * cv;
+        let horizontal = focus_distance * viewport_width * u;
+        let vertical = focus_distance * viewport_height * v;
 
         // Projection plane's surface's low left corner point
         let lower_left_corner = origin
         - horizontal / 2. // Half viewport in x direction
         - vertical / 2. // Half viewport in y direction
-        - focus_distance * cw; // Forward to viewport surface
+        - focus_distance * w; // Forward to viewport surface
 
         Self {
             origin,
             lower_left_corner,
             horizontal,
             vertical,
-            cu,
-            cv,
+            u,
+            v,
             lens_radius: aperture / 2.,
+            shutter_time,
         }
     }
 
     pub fn get_ray(&self, rng: &mut impl Rng, uv: Vec2) -> Ray {
         let rd = self.lens_radius * random_in_disc(rng);
-        let offset = self.cu * rd.x + self.cv * rd.y;
+        let offset = self.u * rd.x + self.v * rd.y;
         Ray::new(
             self.origin + offset,
             self.lower_left_corner + uv.x * self.horizontal + uv.y * self.vertical
                 - self.origin
                 - offset,
+            rng.gen_range(self.shutter_time.clone()),
         )
     }
 }

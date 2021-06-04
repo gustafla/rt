@@ -31,18 +31,31 @@ pub trait Hit: Send + Sync {
 
 pub struct Sphere {
     center: Vec3,
+    direction: Option<Vec3>,
     radius: f32,
 }
 
 impl Sphere {
-    pub fn new(center: Vec3, radius: f32) -> Self {
-        Self { center, radius }
+    pub fn new(center: Vec3, direction: Option<Vec3>, radius: f32) -> Self {
+        Self {
+            center,
+            direction,
+            radius,
+        }
+    }
+
+    fn center(&self, time: f32) -> Vec3 {
+        if let Some(direction) = self.direction {
+            self.center + time * direction
+        } else {
+            self.center
+        }
     }
 }
 
 impl Hit for Sphere {
     fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
-        let oc = r.origin() - self.center;
+        let oc = r.origin() - self.center(r.time());
         let a = r.direction().mag().powi(2);
         let half_b = oc.dot(r.direction());
         let c = oc.mag().powi(2) - self.radius.powi(2);
@@ -63,7 +76,7 @@ impl Hit for Sphere {
         }
 
         let position = r.at(root);
-        let outward_normal = (position - self.center) / self.radius;
+        let outward_normal = (position - self.center(r.time())) / self.radius;
         Some(HitRecord::new(position, outward_normal, root, r))
     }
 }
