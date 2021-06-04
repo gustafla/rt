@@ -1,3 +1,4 @@
+use super::Motion;
 use crate::Ray;
 use std::ops::Range;
 use ultraviolet::Vec3;
@@ -26,36 +27,24 @@ impl HitRecord {
 }
 
 pub trait Hit: Send + Sync {
-    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord>;
+    fn hit(&self, r: &Ray, t_range: Range<f32>, motion: &Motion) -> Option<HitRecord>;
 }
 
 pub struct Sphere {
     center: Vec3,
-    direction: Option<Vec3>,
     radius: f32,
 }
 
 impl Sphere {
-    pub fn new(center: Vec3, direction: Option<Vec3>, radius: f32) -> Self {
-        Self {
-            center,
-            direction,
-            radius,
-        }
-    }
-
-    fn center(&self, time: f32) -> Vec3 {
-        if let Some(direction) = self.direction {
-            self.center + time * direction
-        } else {
-            self.center
-        }
+    pub fn new(center: Vec3, radius: f32) -> Self {
+        Self { center, radius }
     }
 }
 
 impl Hit for Sphere {
-    fn hit(&self, r: &Ray, t_range: Range<f32>) -> Option<HitRecord> {
-        let oc = r.origin() - self.center(r.time());
+    fn hit(&self, r: &Ray, t_range: Range<f32>, motion: &Motion) -> Option<HitRecord> {
+        let center = self.center + r.time() * motion.velocity;
+        let oc = r.origin() - center;
         let a = r.direction().mag().powi(2);
         let half_b = oc.dot(r.direction());
         let c = oc.mag().powi(2) - self.radius.powi(2);
@@ -76,7 +65,7 @@ impl Hit for Sphere {
         }
 
         let position = r.at(root);
-        let outward_normal = (position - self.center(r.time())) / self.radius;
+        let outward_normal = (position - center) / self.radius;
         Some(HitRecord::new(position, outward_normal, root, r))
     }
 }

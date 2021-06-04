@@ -1,8 +1,10 @@
 pub mod material;
+pub mod motion;
 pub mod surface;
 
 use crate::Ray;
 use material::{Dielectric, Lambertian, Metal, Scatter};
+use motion::Motion;
 use rand::prelude::*;
 use surface::{Hit, HitRecord, Sphere};
 use ultraviolet::{Lerp, Vec3};
@@ -10,6 +12,7 @@ use ultraviolet::{Lerp, Vec3};
 pub struct Object<R: Rng> {
     pub surface: Box<dyn Hit>,
     pub material: Box<dyn Scatter<R>>,
+    pub motion: Motion,
 }
 
 pub struct World<R: Rng> {
@@ -23,8 +26,9 @@ impl<R: Rng> World<R> {
 
     pub fn random(rng: &mut impl Rng) -> Self {
         let mut objects = vec![Object {
-            surface: Box::new(Sphere::new(Vec3::new(0., -1000., 0.), None, 1000.)),
+            surface: Box::new(Sphere::new(Vec3::new(0., -1000., 0.), 1000.)),
             material: Box::new(Lambertian::new(Vec3::one() * 0.5)),
+            motion: Motion::default(),
         }];
 
         for a in -11..=11 {
@@ -35,45 +39,54 @@ impl<R: Rng> World<R> {
                     b as f32 + rng.gen_range(0f32..0.9),
                 );
 
-                let (direction, material) = match rng.gen_range(0..=100) {
+                let (motion, material) = match rng.gen_range(0..=100) {
                     // Diffuse
                     0..=79 => (
-                        Some(Vec3::unit_y() * rng.gen_range(0f32..0.5)),
+                        Motion {
+                            velocity: Vec3::unit_y() * rng.gen_range(0f32..0.5),
+                        },
                         Box::new(Lambertian::new(
                             Vec3::from(rng.gen::<[f32; 3]>()) * Vec3::from(rng.gen::<[f32; 3]>()),
                         )) as Box<dyn Scatter<R>>,
                     ),
                     // Metal
                     80..=94 => (
-                        None,
+                        Motion::default(),
                         Box::new(Metal::new(
                             Vec3::from(rng.gen::<[f32; 3]>()).lerp(Vec3::one(), 0.4),
                             rng.gen_range(0.0..0.2),
                         )) as Box<dyn Scatter<R>>,
                     ),
                     // Glass
-                    _ => (None, Box::new(Dielectric::new(1.5)) as Box<dyn Scatter<R>>),
+                    _ => (
+                        Motion::default(),
+                        Box::new(Dielectric::new(1.5)) as Box<dyn Scatter<R>>,
+                    ),
                 };
 
                 objects.push(Object {
-                    surface: Box::new(Sphere::new(center, direction, 0.2)),
+                    surface: Box::new(Sphere::new(center, 0.2)),
                     material,
+                    motion,
                 });
             }
         }
 
         objects.extend(vec![
             Object {
-                surface: Box::new(Sphere::new(Vec3::new(0., 1., 0.), None, 1.)),
+                surface: Box::new(Sphere::new(Vec3::new(0., 1., 0.), 1.)),
                 material: Box::new(Dielectric::new(1.5)),
+                motion: Motion::default(),
             },
             Object {
-                surface: Box::new(Sphere::new(Vec3::new(-4., 1., 0.), None, 1.)),
+                surface: Box::new(Sphere::new(Vec3::new(-4., 1., 0.), 1.)),
                 material: Box::new(Lambertian::new(Vec3::new(0.4, 0.2, 0.1))),
+                motion: Motion::default(),
             },
             Object {
-                surface: Box::new(Sphere::new(Vec3::new(4., 1., 0.), None, 1.)),
+                surface: Box::new(Sphere::new(Vec3::new(4., 1., 0.), 1.)),
                 material: Box::new(Metal::new(Vec3::new(0.7, 0.6, 0.5), 0.)),
+                motion: Motion::default(),
             },
         ]);
 
@@ -84,8 +97,13 @@ impl<R: Rng> World<R> {
         let mut nearest_hit = None;
         let mut nearest_t = f32::INFINITY;
 
-        for Object { surface, material } in self.objects.iter() {
-            if let Some(hit) = surface.hit(r, t_min..nearest_t) {
+        for Object {
+            surface,
+            material,
+            motion,
+        } in &self.objects
+        {
+            if let Some(hit) = surface.hit(r, t_min..nearest_t, motion) {
                 nearest_t = hit.t;
                 nearest_hit = Some((hit, material.as_ref()));
             }
