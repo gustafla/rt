@@ -4,17 +4,14 @@ use rand::prelude::*;
 use ultraviolet::Vec3;
 
 pub trait Scatter<R: Rng>: Send + Sync {
-    fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)>;
+    fn scatter(&self, rng: &mut R, r: Ray, hit: HitRecord) -> Option<(Vec3, Ray)>;
 }
 
-fn random_in_sphere(rng: &mut impl Rng) -> Vec3 {
-    loop {
-        let v = Vec3::from(rng.gen::<[f32; 3]>()) * 2. - Vec3::one();
-        let len = v.mag_sq();
-        if len < 1. && len > 0.0001 {
-            return v;
-        }
-    }
+fn random_on_sphere(rng: &mut impl Rng) -> Vec3 {
+    let phi = rng.gen_range(0f32..std::f32::consts::TAU);
+    let z = rng.gen_range(-1f32..1.); // Equal to cos theta
+    let sin_theta = (1. - z.powi(2)).sqrt();
+    Vec3::new(sin_theta * phi.cos(), sin_theta * phi.sin(), z)
 }
 
 pub struct Lambertian {
@@ -28,17 +25,10 @@ impl Lambertian {
 }
 
 impl<R: Rng> Scatter<R> for Lambertian {
-    fn scatter(&self, rng: &mut R, _: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
-        let mut direction = hit.normal + random_in_sphere(rng).normalized();
-        if direction.mag_sq() < 0.001 {
-            direction = hit.normal;
-        }
+    fn scatter(&self, rng: &mut R, _: Ray, hit: HitRecord) -> Option<(Vec3, Ray)> {
+        let direction = hit.normal + random_on_sphere(rng);
         Some((self.albedo, Ray::new(hit.position, direction)))
     }
-}
-
-fn reflect(v: Vec3, normal: Vec3) -> Vec3 {
-    v - 2. * v.dot(normal) * normal
 }
 
 pub struct Metal {
@@ -53,22 +43,14 @@ impl Metal {
 }
 
 impl<R: Rng> Scatter<R> for Metal {
-    fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
-        let reflected = reflect(r.direction(), hit.normal).normalized();
-        let scattered = reflected + self.fuzz * random_in_sphere(rng);
-        if scattered.dot(hit.normal) > 0. {
-            Some((self.albedo, Ray::new(hit.position, scattered)))
+    fn scatter(&self, rng: &mut R, r: Ray, hit: HitRecord) -> Option<(Vec3, Ray)> {
+        let direction = r.direction().reflected(hit.normal) + self.fuzz * random_on_sphere(rng);
+        if direction.dot(hit.normal) > 0. {
+            Some((self.albedo, Ray::new(hit.position, direction)))
         } else {
             None
         }
     }
-}
-
-fn refract(v: Vec3, normal: Vec3, refraction_ratio: f32) -> Vec3 {
-    let cos_theta = (-v).dot(normal);
-    let perpendicular = refraction_ratio * (v + cos_theta * normal);
-    let parallel = -(1. - perpendicular.mag_sq()).abs().sqrt() * normal;
-    perpendicular + parallel
 }
 
 fn reflectance(cos_theta: f32, refraction_ratio: f32) -> f32 {
@@ -88,22 +70,21 @@ impl Dielectric {
 }
 
 impl<R: Rng> Scatter<R> for Dielectric {
-    fn scatter(&self, rng: &mut R, r: &Ray, hit: &HitRecord) -> Option<(Vec3, Ray)> {
+    fn scatter(&self, rng: &mut R, r: Ray, hit: HitRecord) -> Option<(Vec3, Ray)> {
         let refraction_ratio = if hit.front_facing {
             1. / self.refraction
         } else {
             self.refraction
         };
 
-        let direction = r.direction().normalized();
-        let cos_theta = (-direction).dot(hit.normal);
+        let cos_theta = (-r.direction()).dot(hit.normal);
         let sin_theta = (1. - cos_theta.powi(2)).sqrt();
         let reflectance = reflectance(cos_theta, refraction_ratio);
 
         let direction = if refraction_ratio * sin_theta > 1. || rng.gen::<f32>() < reflectance {
-            reflect(direction, hit.normal)
+            r.direction().reflected(hit.normal)
         } else {
-            refract(direction, hit.normal, refraction_ratio)
+            r.direction().refracted(hit.normal, refraction_ratio)
         };
 
         Some((Vec3::one(), Ray::new(hit.position, direction)))

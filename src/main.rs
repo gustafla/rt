@@ -26,15 +26,14 @@ fn ray_color<R: Rng>(r: Ray, world: &World<R>, rng: &mut R, depth: u32) -> Vec3 
     }
 
     if let Some((hit, material)) = world.traverse(&r, 0.001) {
-        if let Some((att, r)) = material.scatter(rng, &r, &hit) {
+        if let Some((att, r)) = material.scatter(rng, r, hit) {
             att * ray_color(r, world, rng, depth - 1)
         } else {
             Vec3::zero()
         }
     } else {
-        let unit_direction = r.direction().normalized();
         // From 0 to 1 when down to up
-        let t = 0.5 * (unit_direction.y + 1.);
+        let t = 0.5 * (r.direction().y + 1.);
         // Blue to white gradient
         Vec3::one().lerp(Vec3::new(0.5, 0.7, 1.), t)
     }
