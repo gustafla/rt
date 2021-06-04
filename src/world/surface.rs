@@ -1,4 +1,4 @@
-use super::Motion;
+use super::PhysicsFrame;
 use crate::Ray;
 use std::ops::Range;
 use ultraviolet::Vec3;
@@ -27,23 +27,22 @@ impl HitRecord {
 }
 
 pub trait Hit: Send + Sync {
-    fn hit(&self, r: &Ray, t_range: Range<f32>, motion: &Motion) -> Option<HitRecord>;
+    fn hit(&self, r: &Ray, t_range: Range<f32>, physics: &PhysicsFrame) -> Option<HitRecord>;
 }
 
 pub struct Sphere {
-    center: Vec3,
     radius: f32,
 }
 
 impl Sphere {
-    pub fn new(center: Vec3, radius: f32) -> Self {
-        Self { center, radius }
+    pub fn new(radius: f32) -> Self {
+        Self { radius }
     }
 }
 
 impl Hit for Sphere {
-    fn hit(&self, r: &Ray, t_range: Range<f32>, motion: &Motion) -> Option<HitRecord> {
-        let center = self.center + r.time() * motion.velocity;
+    fn hit(&self, r: &Ray, t_range: Range<f32>, physics: &PhysicsFrame) -> Option<HitRecord> {
+        let center = physics.position(r);
         let oc = r.origin() - center;
         let a = r.direction().mag().powi(2);
         let half_b = oc.dot(r.direction());
