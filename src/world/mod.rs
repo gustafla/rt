@@ -1,6 +1,7 @@
 pub mod material;
 pub mod physics;
 pub mod surface;
+pub mod aabb;
 
 use crate::Ray;
 use material::{Dielectric, Lambertian, Metal, Scatter};
