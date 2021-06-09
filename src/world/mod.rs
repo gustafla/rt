@@ -1,9 +1,10 @@
+pub mod aabb;
 pub mod material;
 pub mod physics;
 pub mod surface;
-pub mod aabb;
 
 use crate::Ray;
+use aabb::Aabb;
 use material::{Dielectric, Lambertian, Metal, Scatter};
 use physics::PhysicsFrame;
 use rand::prelude::*;

@@ -1,4 +1,3 @@
-use crate::Ray;
 use std::ops::Range;
 use ultraviolet::{Lerp, Vec3};
 
@@ -14,7 +13,7 @@ impl PhysicsFrame {
         }
     }
 
-    pub fn position(&self, r: &Ray) -> Vec3 {
-        self.position.start.lerp(self.position.end, r.time())
+    pub fn position(&self, time: f32) -> Vec3 {
+        self.position.start.lerp(self.position.end, time)
     }
 }

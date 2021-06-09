@@ -1,3 +1,4 @@
+use super::Aabb;
 use super::PhysicsFrame;
 use crate::Ray;
 use std::ops::Range;
@@ -28,6 +29,7 @@ impl HitRecord {
 
 pub trait Hit: Send + Sync {
     fn hit(&self, r: &Ray, t_range: Range<f32>, physics: &PhysicsFrame) -> Option<HitRecord>;
+    fn bounding_box(&self, physics: &PhysicsFrame) -> Option<Aabb>;
 }
 
 pub struct Sphere {
@@ -42,7 +44,7 @@ impl Sphere {
 
 impl Hit for Sphere {
     fn hit(&self, r: &Ray, t_range: Range<f32>, physics: &PhysicsFrame) -> Option<HitRecord> {
-        let center = physics.position(r);
+        let center = physics.position(r.time());
         let oc = r.origin() - center;
         let a = r.direction().mag().powi(2);
         let half_b = oc.dot(r.direction());
@@ -66,5 +68,14 @@ impl Hit for Sphere {
         let position = r.at(root);
         let outward_normal = (position - center) / self.radius;
         Some(HitRecord::new(position, outward_normal, root, r))
+    }
+
+    fn bounding_box(&self, physics: &PhysicsFrame) -> Option<Aabb> {
+        let pos0 = physics.position(0.);
+        let pos1 = physics.position(1.);
+        let radius = Vec3::broadcast(self.radius);
+        Some(Aabb::surrounding(
+            ((pos0 - radius)..(pos0 + radius))..((pos1 - radius)..(pos1 + radius)),
+        ))
     }
 }

@@ -2,14 +2,21 @@ use crate::Ray;
 use std::ops::Range;
 use ultraviolet::Vec3;
 
-pub struct AABB(Range<Vec3>);
+pub struct Aabb(Range<Vec3>);
 
-impl AABB {
-    fn new(range: Range<Vec3>) -> Self {
+impl Aabb {
+    pub fn new(range: Range<Vec3>) -> Self {
         Self(range)
     }
 
-    fn hit(&self, ray: &Ray, t_range: Range<f32>) -> bool {
+    pub fn surrounding(ranges: Range<Range<Vec3>>) -> Self {
+        Self(
+            ranges.start.start.min_by_component(ranges.end.start)
+                ..ranges.start.end.max_by_component(ranges.end.end),
+        )
+    }
+
+    pub fn hit(&self, ray: &Ray, t_range: Range<f32>) -> bool {
         let mut t_min = t_range.start;
         let mut t_max = t_range.end;
 
